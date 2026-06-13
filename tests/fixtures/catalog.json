@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-06-09T00:00:00Z",
+  "entries": [
+    {
+      "id": "ddc/skills:ifc/quantity-takeoff",
+      "source": {
+        "name": "ifc-quantity-takeoff",
+        "repo": "ddc/skills",
+        "url": "https://github.com/ddc/skills",
+        "stars": 210,
+        "license": { "spdx_id": "MIT", "copyleft": false }
+      },
+      "description": "Quantity takeoff and BoQ extraction from IFC models using IfcOpenShell.",
+      "tags": ["ifc", "qto", "boq", "openbim"],
+      "languages": ["Python"]
+    },
+    {
+      "id": "ddc/skills:ifc/validation",
+      "source": {
+        "name": "ifc-validation",
+        "repo": "ddc/skills",
+        "url": "https://github.com/ddc/skills",
+        "stars": 210,
+        "license": { "spdx_id": "MIT", "copyleft": false }
+      },
+      "description": "Validate IFC models against information requirements and report failures.",
+      "tags": ["ifc", "validation", "ids", "openbim"],
+      "languages": ["Python"]
+    },
+    {
+      "id": "compdesigners/skills:grasshopper",
+      "source": {
+        "name": "grasshopper-automation",
+        "repo": "compdesigners/skills",
+        "url": "https://github.com/compdesigners/skills",
+        "stars": 95,
+        "license": { "spdx_id": "MIT", "copyleft": false }
+      },
+      "description": "Automate Grasshopper definitions and Rhino geometry pipelines.",
+      "tags": ["grasshopper", "rhino", "parametric"],
+      "languages": ["Python", "C#"]
+    },
+    {
+      "id": "compdesigners/skills:revit-dynamo",
+      "source": {
+        "name": "revit-dynamo",
+        "repo": "compdesigners/skills",
+        "url": "https://github.com/compdesigners/skills",
+        "stars": 95,
+        "license": { "spdx_id": "MIT", "copyleft": false }
+      },
+      "description": "Automate Revit workflows with Dynamo graphs and the Revit API.",
+      "tags": ["revit", "dynamo", "bim"],
+      "languages": ["Python", "C#"]
+    },
+    {
+      "id": "impertio/skills:bonsai",
+      "source": {
+        "name": "bonsai-blender-bim",
+        "repo": "impertio/skills",
+        "url": "https://github.com/impertio/skills",
+        "stars": 60,
+        "license": { "spdx_id": "MIT", "copyleft": false }
+      },
+      "description": "Model and inspect IFC data in Blender with Bonsai.",
+      "tags": ["blender", "bim", "ifc"],
+      "languages": ["Python"]
+    },
+    {
+      "id": "acme/skills:speckle-sync",
+      "source": {
+        "name": "speckle-interop",
+        "repo": "acme/skills",
+        "url": "https://github.com/acme/skills",
+        "stars": 31,
+        "license": { "spdx_id": "MIT", "copyleft": false }
+      },
+      "description": "Exchange model data between AEC tools through Speckle streams.",
+      "tags": ["speckle", "interop", "coordination"],
+      "languages": ["Python"]
+    },
+    {
+      "id": "anthropics/skills:pdf",
+      "source": {
+        "name": "pdf",
+        "repo": "anthropics/skills",
+        "url": "https://github.com/anthropics/skills",
+        "stars": 4800,
+        "license": { "spdx_id": "MIT", "copyleft": false }
+      },
+      "description": "Read, create, and edit PDF files.",
+      "tags": ["pdf", "documents"],
+      "languages": ["Python"]
+    },
+    {
+      "id": "anthropics/skills:webapp-testing",
+      "source": {
+        "name": "webapp-testing",
+        "repo": "anthropics/skills",
+        "url": "https://github.com/anthropics/skills",
+        "stars": 4800,
+        "license": { "spdx_id": "MIT", "copyleft": false }
+      },
+      "description": "Drive a browser to test web applications end to end.",
+      "tags": ["testing", "playwright", "browser"],
+      "languages": ["TypeScript"]
+    },
+    {
+      "id": "acme/skills:react-components",
+      "source": {
+        "name": "react-components",
+        "repo": "acme/skills",
+        "url": "https://github.com/acme/skills",
+        "stars": 320,
+        "license": { "spdx_id": "MIT", "copyleft": false }
+      },
+      "description": "Build accessible React component libraries.",
+      "tags": ["react", "frontend"],
+      "languages": ["TypeScript", "JavaScript"]
+    },
+    {
+      "id": "acme/skills:data-cleaning",
+      "source": {
+        "name": "data-cleaning",
+        "repo": "acme/skills",
+        "url": "https://github.com/acme/skills",
+        "stars": 77,
+        "license": { "spdx_id": "MIT", "copyleft": false }
+      },
+      "description": "Clean and normalize tabular data with pandas.",
+      "tags": ["pandas", "data"],
+      "languages": ["Python"]
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "name": "skillmeld",
+  "description": "Discover existing community skills and merge the best into one tailored, security-scanned skill set.",
+  "version": "0.0.0",
+  "author": { "name": "Hossein Zargar" },
+  "homepage": "https://ifylab.dev",
+  "license": "Apache-2.0"
+}

@@ -1,0 +1,46 @@
+rules:
+  - id: skillmeld-python-eval
+    languages: [python]
+    severity: ERROR
+    message: eval() on dynamic input
+    pattern: eval(...)
+  - id: skillmeld-python-exec
+    languages: [python]
+    severity: ERROR
+    message: exec() on dynamic input
+    pattern: exec(...)
+  - id: skillmeld-python-os-system
+    languages: [python]
+    severity: WARNING
+    message: os.system() shells out with string interpolation risk
+    pattern: os.system(...)
+  - id: skillmeld-python-subprocess-shell
+    languages: [python]
+    severity: WARNING
+    message: subprocess with shell=True
+    patterns:
+      - pattern: subprocess.$FUNC(..., shell=True, ...)
+  - id: skillmeld-python-pickle-loads
+    languages: [python]
+    severity: WARNING
+    message: pickle deserialization of untrusted data
+    pattern: pickle.loads(...)
+  - id: skillmeld-python-yaml-unsafe-load
+    languages: [python]
+    severity: WARNING
+    message: yaml.load without SafeLoader
+    patterns:
+      - pattern: yaml.load(...)
+      - pattern-not: yaml.load(..., Loader=yaml.SafeLoader)
+  - id: skillmeld-js-eval
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: eval() on dynamic input
+    pattern: eval(...)
+  - id: skillmeld-js-child-process
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: child_process execution
+    pattern-either:
+      - pattern: child_process.exec(...)
+      - pattern: child_process.execSync(...)
