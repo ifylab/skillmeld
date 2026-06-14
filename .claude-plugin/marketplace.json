@@ -1,8 +1,12 @@
 {
   "name": "ifylab",
+  "owner": {
+    "name": "ifylab",
+    "url": "https://github.com/ifylab"
+  },
   "metadata": {
     "description": "The .ify marketplace.",
-    "version": "0.0.0"
+    "version": "0.1.0"
   },
   "plugins": [
     {
