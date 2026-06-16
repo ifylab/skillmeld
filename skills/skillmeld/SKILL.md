@@ -74,7 +74,10 @@ Each command prints JSON to stdout. This skill reads that JSON and supplies the 
    friendly description and gate it through
    `run.sh eval improve --skill <index|orchestrator> --description "..."` with the trigger
    queries and routing judgments — an edit is accepted only if structural quality holds, no
-   held-out query leaks, and the held-out routing pass-rate does not regress. The orchestrator
+   held-out query leaks, and the held-out routing pass-rate does not regress — measured both from
+   your reported routing and from an independent engine-side pass that routes the queries against
+   the descriptions, so acceptance never rests on your self-report. Phrase each description with
+   the literal words a user would say; the independent router keys on them. The orchestrator
    ships with a templated routing description already; refine it the same way (`--skill
    orchestrator`) only if needed. Then `run.sh eval run` must report `passed: true` over the set.
    With the set now complete, show the user the plan and the authored descriptions as one
@@ -140,7 +143,10 @@ The JSON shapes you author by hand, so you do not have to read the engine source
   pass-rate, so an edit must improve genuine routing, not memorize the train queries.
 - **Routing judgments** (`--judgments`, `--baseline-judgments`, `--candidate-judgments`): a list of
   `{"query_id": "q1", "routed_skill": "<name|null>"}` — your report of where the orchestrator sent
-  each query, before and after the edit.
+  each query, before and after the edit. The engine also routes the queries itself against the
+  descriptions as a cross-check: `eval run` adds an `independent_trigger` score and any
+  `routing_disagreements`, and `eval improve` rejects an edit whose independent held-out routing
+  regresses even when your reported routing held.
 - **Carrying licenses**: `merge --sources <discover.json>` and `emit --sources <discover.json>`
   re-attach the per-source licenses discovery knew (matched by bundle hash), so the plan and
   `PROVENANCE.md` show the real license instead of "unknown". A merged set is only as licensed as

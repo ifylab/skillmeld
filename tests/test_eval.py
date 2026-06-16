@@ -8,6 +8,7 @@ import pytest
 from skillmeld.eval.evaluate import apply_description_edit, evaluate
 from skillmeld.eval.leakage import held_out_leaks
 from skillmeld.eval.quality import score_quality
+from skillmeld.eval.route import route_queries
 from skillmeld.eval.strategy import STRATEGIES, TaskPassRateStrategy
 from skillmeld.eval.trigger import TriggerJudgment, TriggerQuery, score_trigger, split
 from skillmeld.merge.dedupe import collapse
@@ -277,3 +278,116 @@ def test_task_pass_rate_strategy_is_registered_but_inactive() -> None:
     assert "task-pass-rate" in STRATEGIES
     with pytest.raises(NotImplementedError):
         TaskPassRateStrategy().gate()
+
+
+# --- independent engine-side routing (honesty cross-check) ------------------------------
+
+# Distinctive descriptions: each query's discriminating term lands on exactly one child, so the
+# deterministic router has a clear winner. 'documents'/'corpus' route to the first child;
+# 'check'/'quality' route to the second.
+RETRIEVER_DESC = "Find, search, and retrieve documents from the corpus for a query."
+REVIEWER_DESC = "Review writing and check quality."
+
+
+def _authored_route_result() -> tuple[MergeResult, list[SkillDoc], tuple[str, str]]:
+    result, sources = _merge()
+    a = str(result.skills[0].doc.frontmatter["name"])
+    b = str(result.skills[1].doc.frontmatter["name"])
+    result.skills[0].doc.frontmatter["description"] = RETRIEVER_DESC
+    result.skills[1].doc.frontmatter["description"] = REVIEWER_DESC
+    return result, sources, (a, b)
+
+
+def test_route_queries_routes_each_query_by_description() -> None:
+    result, _, (a, b) = _authored_route_result()
+    queries = [
+        TriggerQuery(id="q1", text="find me documents", kind="trigger", expected_skill=a),
+        TriggerQuery(id="q2", text="search the corpus", kind="trigger", expected_skill=a),
+        TriggerQuery(id="q3", text="check document quality", kind="trigger", expected_skill=b),
+        TriggerQuery(id="q4", text="order me a pizza", kind="near-miss", expected_skill=None),
+    ]
+    judgments = route_queries(result, queries)
+    routed = {j.query_id: j.routed_skill for j in judgments}
+    assert routed == {"q1": a, "q2": a, "q3": b, "q4": None}
+    assert score_trigger(queries, judgments).pass_rate == 1.0
+
+
+def test_route_queries_cannot_route_to_an_empty_description() -> None:
+    # A fresh merge leaves every child description empty; an undescribed skill never triggers.
+    result, _ = _merge()
+    query = TriggerQuery(id="q1", text="find me documents", kind="trigger")
+    assert route_queries(result, [query])[0].routed_skill is None
+
+
+def test_route_queries_routes_nowhere_without_a_clear_winner() -> None:
+    result, _ = _merge()
+    shared = "Handle documents for the project."
+    result.skills[0].doc.frontmatter["description"] = shared
+    result.skills[1].doc.frontmatter["description"] = shared
+    query = TriggerQuery(id="q1", text="process the documents", kind="trigger")
+    # 'documents' matches both children equally — an ambiguous tie routes nowhere.
+    assert route_queries(result, [query])[0].routed_skill is None
+
+
+def test_evaluate_reports_independent_routing_and_flags_disagreement() -> None:
+    result, sources, (a, b) = _authored_route_result()
+    queries = [
+        TriggerQuery(id="q1", text="find me documents", kind="trigger", expected_skill=a),
+        TriggerQuery(id="q3", text="check document quality", kind="trigger", expected_skill=b),
+    ]
+    # The host claims q1 went to the wrong child; the engine routes it correctly and disagrees.
+    host = [
+        TriggerJudgment(query_id="q1", routed_skill=b),
+        TriggerJudgment(query_id="q3", routed_skill=b),
+    ]
+    report = evaluate(result, sources, queries=queries, judgments=host)
+    assert report.independent_trigger is not None
+    assert report.independent_trigger.pass_rate == 1.0
+    assert report.routing_disagreements == ["q1"]
+
+
+def test_description_edit_rejected_when_independent_routing_regresses() -> None:
+    # The host reports good routing before and after, but the edited description routes the
+    # held-out query worse on its own terms — the independent check rejects what the host blessed.
+    result, sources = _merge()
+    a = str(result.skills[0].doc.frontmatter["name"])
+    result.skills[0].doc.frontmatter["description"] = "Find and retrieve documents for a query."
+    held = TriggerQuery(id="q1", text="find documents", kind="trigger", expected_skill=a)
+    host = [TriggerJudgment(query_id="q1", routed_skill=a)]
+    edited, decision = apply_description_edit(
+        result,
+        sources,
+        0,
+        "Helps with miscellaneous tasks.",
+        queries=[held],
+        baseline_judgments=host,
+        candidate_judgments=host,  # host insists routing is unchanged and fine
+    )
+    assert not decision.accepted
+    assert decision.before_independent == 1.0
+    assert decision.after_independent == 0.0
+    assert any("independent routing regressed" in reason for reason in decision.reasons)
+    # Rejected, so the good description is preserved.
+    assert str(edited.skills[0].doc.frontmatter["description"]).startswith("Find and retrieve")
+
+
+def test_description_edit_accepted_when_independent_routing_holds() -> None:
+    # A genuine rewording that keeps the trigger terms must still clear the independent check.
+    result, sources = _merge()
+    a = str(result.skills[0].doc.frontmatter["name"])
+    result.skills[0].doc.frontmatter["description"] = "Find and retrieve documents."
+    held = TriggerQuery(id="q1", text="find documents", kind="trigger", expected_skill=a)
+    host = [TriggerJudgment(query_id="q1", routed_skill=a)]
+    edited, decision = apply_description_edit(
+        result,
+        sources,
+        0,
+        "Find, retrieve, and rank documents for a query.",
+        queries=[held],
+        baseline_judgments=host,
+        candidate_judgments=host,
+    )
+    assert decision.accepted, decision.reasons
+    assert decision.before_independent == 1.0
+    assert decision.after_independent == 1.0
+    assert "rank" in str(edited.skills[0].doc.frontmatter["description"])

@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from skillmeld.eval.leakage import held_out_leaks
 from skillmeld.eval.quality import QualityReport, score_quality
+from skillmeld.eval.route import route_queries
 from skillmeld.eval.strategy import DEFAULT_STRATEGY, STRATEGIES
 from skillmeld.eval.trigger import TriggerJudgment, TriggerQuery, TriggerScore, score_trigger, split
 from skillmeld.merge.verify import verify
@@ -22,6 +23,8 @@ from skillmeld.models import MergeResult, SkillDoc
 class EvalReport(BaseModel):
     quality: list[QualityReport] = Field(default_factory=list)
     trigger: TriggerScore | None = None
+    independent_trigger: TriggerScore | None = None
+    routing_disagreements: list[str] = Field(default_factory=list)
     leakage: list[str] = Field(default_factory=list)
     verifier_problems: list[str] = Field(default_factory=list)
     passed: bool = True
@@ -32,6 +35,8 @@ class EditDecision(BaseModel):
     reasons: list[str] = Field(default_factory=list)
     before_held_out: float = 0.0
     after_held_out: float = 0.0
+    before_independent: float = 0.0
+    after_independent: float = 0.0
 
 
 def evaluate(
@@ -45,14 +50,22 @@ def evaluate(
     quality = [score_quality(skill.doc) for skill in result.skills]
     problems = verify(result, sources)
     trigger: TriggerScore | None = None
+    independent: TriggerScore | None = None
+    disagreements: list[str] = []
     leaks: list[str] = []
     if queries:
         trigger = score_trigger(queries, judgments or [])
+        engine_judgments = route_queries(result, queries)
+        independent = score_trigger(queries, engine_judgments)
+        if judgments:
+            disagreements = _disagreements(judgments, engine_judgments)
         leaks = held_out_leaks(result, queries, trigger.held_out_ids)
     passed = all(report.passed for report in quality) and not problems and not leaks
     return EvalReport(
         quality=quality,
         trigger=trigger,
+        independent_trigger=independent,
+        routing_disagreements=disagreements,
         leakage=leaks,
         verifier_problems=problems,
         passed=passed,
@@ -87,15 +100,28 @@ def apply_description_edit(
     candidate = score_trigger(queries, candidate_judgments).held_out_pass_rate
     regressed = candidate < before
 
+    # Independent cross-check: route the held-out queries against the descriptions themselves,
+    # before and after the edit, so acceptance does not rest on the host's self-reported routing.
+    before_independent = score_trigger(queries, route_queries(result, queries)).held_out_pass_rate
+    after_independent = score_trigger(queries, route_queries(after, queries)).held_out_pass_rate
+    independent_regressed = after_independent < before_independent
+
     reasons = list(gate.reasons)
     if regressed:
         reasons.append(f"held-out pass-rate regressed ({before} -> {candidate})")
-    accepted = gate.passed and not regressed
+    if independent_regressed:
+        reasons.append(
+            f"independent routing regressed ({before_independent} -> {after_independent}); "
+            "the edited description routes the held-out queries worse on its own terms"
+        )
+    accepted = gate.passed and not regressed and not independent_regressed
     decision = EditDecision(
         accepted=accepted,
         reasons=reasons,
         before_held_out=before,
         after_held_out=candidate,
+        before_independent=before_independent,
+        after_independent=after_independent,
     )
     return (after if accepted else result), decision
 
@@ -107,3 +133,14 @@ def _resolve_target(result: MergeResult, target: int | str) -> SkillDoc | None:
     if isinstance(target, int) and 0 <= target < len(result.skills):
         return result.skills[target].doc
     return None
+
+
+def _disagreements(host: list[TriggerJudgment], engine: list[TriggerJudgment]) -> list[str]:
+    """Query ids where the host's reported routing and the independent engine routing differ."""
+    engine_by_id = {judgment.query_id: judgment.routed_skill for judgment in engine}
+    return sorted(
+        judgment.query_id
+        for judgment in host
+        if judgment.query_id in engine_by_id
+        and judgment.routed_skill != engine_by_id[judgment.query_id]
+    )

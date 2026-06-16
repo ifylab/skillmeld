@@ -118,13 +118,13 @@ def _profile_needles(profile: UseCaseProfile) -> list[tuple[str, float, list[str
     """Expand the profile into labelled needle groups, deduplicated and order-stable."""
     task_tokens: set[str] = set()
     for task in profile.tasks:
-        task_tokens |= _tokens(task)
+        task_tokens |= tokenize(task)
     groups = [
         ("language", _dedupe(profile.languages)),
         ("framework", _dedupe(profile.frameworks)),
         ("convention", _dedupe(profile.conventions)),
         ("task", sorted(task_tokens)),
-        ("term", sorted(_tokens(profile.summary))),
+        ("term", sorted(tokenize(profile.summary))),
     ]
     return [(label, _WEIGHTS[label], needles) for label, needles in groups]
 
@@ -164,14 +164,14 @@ def _match(
 
 def _entry_haystack(entry: CatalogEntry) -> set[str]:
     exact = {_norm(v) for v in entry.languages} | {_norm(t) for t in entry.tags}
-    text = _tokens(f"{entry.source.name} {entry.description}")
+    text = tokenize(f"{entry.source.name} {entry.description}")
     return exact | text
 
 
 def _hit(needle: str, haystack: set[str]) -> bool:
     if needle in haystack:
         return True
-    parts = _tokens(needle)
+    parts = tokenize(needle)
     return bool(parts) and parts <= haystack
 
 
@@ -188,7 +188,8 @@ def _norm(value: str) -> str:
     return value.strip().lower()
 
 
-def _tokens(text: str) -> set[str]:
+def tokenize(text: str) -> set[str]:
+    """Lowercase word tokens, stopwords removed; the shared tokenizer for token matching."""
     found: set[str] = set()
     for raw in _TOKEN.findall(text.lower()):
         token = raw.strip(".-")
