@@ -66,7 +66,11 @@ Each command prints JSON to stdout. This skill reads that JSON and supplies the 
      never make a flagged structural conflict disappear.
    The result carries a `plan` (what was kept, dropped, deduped, and why) and a `problems` list.
    `problems` MUST be empty — a non-empty list means the byte-traceability verifier rejected the
-   merge; never install a rejected result. Hold the consolidated review until the set is complete
+   merge; never install a rejected result. The merge also carries each source's tool and invocation
+   frontmatter onto the children, reconciled (allowed-tools narrowed to the intersection,
+   disallowed-tools unioned, disable-model-invocation honored); when that drops a pre-approved tool
+   or leaves a child non-invocable, `plan.frontmatter_verdict` is `review` and
+   `plan.frontmatter_findings` says why. Hold the consolidated review until the set is complete
    (after step 8).
 8. Author descriptions + evaluate — the merge leaves every child skill's `description` empty on
    purpose (it never invents text), so each one must be authored before it can ship; a skill
@@ -84,7 +88,9 @@ Each command prints JSON to stdout. This skill reads that JSON and supplies the 
    consolidated review before writing anything.
 9. Emit — `run.sh emit <surface>` packages the result; install only after the user approves. Emit
    refuses any skill (child or orchestrator) whose description is still empty, so a set can never
-   ship dead even if this step was rushed.
+   ship dead even if this step was rushed. `emit api` also returns `warnings` when a composed skill
+   carries tool or invocation frontmatter (the `/v1/skills` surface does not enforce those) — relay
+   them so the user knows the restriction is not active there.
 
 Every atom in the merged output traces byte-for-byte to a source skill; the engine invents no
 instruction text. Nothing is fetched, merged, or installed without showing the user what will
@@ -105,6 +111,8 @@ Two human stops on the happy path; everything else streams as narrated progress.
   - what was deduped or dropped, and why (name the decision, not just the outcome);
   - the consolidated security verdict, with any REVIEW finding named for the exact skill and
     line (`pdf-helper reads ~/.aws/credentials, line 34`), not boilerplate;
+  - any frontmatter REVIEW from `plan.frontmatter_findings` (a source's pre-approved tool dropped
+    in the intersection, or a child left non-invocable), named for the skill it affects;
   - the license resolution and a coarse confidence band.
   Actions: Approve and install / Adjust / Dry-run / Cancel.
 - **Stop 2 — second-layer scan and write** (the install/trust gate). Re-scan the merged
@@ -154,7 +162,10 @@ The JSON shapes you author by hand, so you do not have to read the engine source
 - **Merge result shape**: `merge` prints `{"result": ..., "problems": [...]}`. Inside `result`,
   each child is `skills[i].doc` with `frontmatter.{name, description}` and `body`; the router is
   `orchestrator.doc`; `plan` carries `kept`/`dropped`/`drop_reasons`/`conflicts_resolved`/
-  `license_resolution`/`warnings`. The description you author goes in `frontmatter.description`.
+  `license_resolution`/`warnings`, plus `frontmatter_verdict` (`pass`/`review`) and
+  `frontmatter_findings` for any carried-frontmatter REVIEW. A child may also carry
+  `frontmatter.{allowed-tools, disallowed-tools, disable-model-invocation, compatibility, metadata}`
+  reconciled from its sources. The description you author goes in `frontmatter.description`.
 - **Chaining `eval improve`**: each call returns `{"decision": ..., "result": ...}` with the *whole*
   updated set. To author several descriptions, feed the returned `result` into the next
   `improve` so edits accumulate; author the children one at a time, then run `eval run` over the
