@@ -12,6 +12,8 @@ import io
 import zipfile
 from pathlib import Path
 
+import yaml
+
 from skillmeld.emit.provenance import build_provenance
 from skillmeld.merge.pipeline import support_references
 from skillmeld.merge.synthesize import slug
@@ -19,7 +21,11 @@ from skillmeld.models import AssembledSkill, MergeResult, SkillDoc
 
 
 def render_skill_md(doc: SkillDoc) -> str:
-    """Render a SKILL.md: frontmatter (name, optional description, license) then verbatim body."""
+    """Render a SKILL.md: frontmatter then the verbatim body (never rewritten here).
+
+    Frontmatter order is fixed: name, description, license, then the carried source fields
+    (compatibility, allowed-tools, disallowed-tools, disable-model-invocation, metadata).
+    """
     name = str(doc.frontmatter.get("name", doc.source.name))
     description = str(doc.frontmatter.get("description", ""))
     license_id = str(doc.frontmatter.get("license", "")).strip()
@@ -28,9 +34,30 @@ def render_skill_md(doc: SkillDoc) -> str:
         front += f"description: {description}\n"
     if license_id:
         front += f"license: {license_id}\n"
+    front += _render_carried(doc.frontmatter)
     front += "---\n"
     body = doc.body if doc.body.startswith("\n") else "\n" + doc.body
     return front + body
+
+
+def _render_carried(frontmatter: dict[str, object]) -> str:
+    """Render the carried frontmatter fields in a fixed order, deterministically."""
+    lines: list[str] = []
+    for field in ("compatibility", "allowed-tools", "disallowed-tools"):
+        value = str(frontmatter.get(field, "")).strip()
+        if value:
+            lines.append(f"{field}: {value}")
+    if frontmatter.get("disable-model-invocation") is True:
+        lines.append("disable-model-invocation: true")
+    metadata = frontmatter.get("metadata")
+    if isinstance(metadata, dict) and metadata:
+        block = yaml.safe_dump(metadata, default_flow_style=False, sort_keys=True).rstrip("\n")
+        lines.append("metadata:\n" + "\n".join(f"  {line}" for line in block.splitlines()))
+    return "".join(f"{line}\n" for line in lines)
+
+
+def _carried_present(value: object) -> bool:
+    return value is True or (isinstance(value, str) and bool(value.strip()))
 
 
 def apply_source_licenses(result: MergeResult, sources: list[SkillDoc]) -> None:
@@ -165,3 +192,26 @@ def emit_api_payload(result: MergeResult) -> list[dict[str, str]]:
             }
         )
     return payloads
+
+
+def api_surface_warnings(result: MergeResult) -> list[str]:
+    """Claude-Code-only frontmatter the API ``/v1/skills`` surface does not enforce.
+
+    The fields stay carried verbatim in the uploaded SKILL.md content, but the API ignores tool
+    and invocation frontmatter, so a tool-restricted or non-invocable composed skill is not
+    constrained there. Surface it so the gap is a known trade-off, not silent.
+    """
+    warnings: list[str] = []
+    for skill in _emitted_skills(result):
+        name = str(skill.doc.frontmatter.get("name", skill.doc.source.name))
+        carried = [
+            field
+            for field in ("allowed-tools", "disallowed-tools", "disable-model-invocation")
+            if _carried_present(skill.doc.frontmatter.get(field))
+        ]
+        if carried:
+            warnings.append(
+                f"{name}: {', '.join(carried)} carried in SKILL.md but the API surface does not "
+                "enforce tool or invocation frontmatter"
+            )
+    return warnings

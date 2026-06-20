@@ -10,6 +10,12 @@ provably either a verbatim source atom or a closed-vocabulary scaffold token.
 
 from __future__ import annotations
 
+from skillmeld.merge.frontmatter import (
+    CARRYABLE,
+    atom_skill_index,
+    contributing_sources,
+    reconcile_frontmatter,
+)
 from skillmeld.merge.parse import parse_skill
 from skillmeld.merge.synthesize import render_body, render_orchestrator
 from skillmeld.models import Atom, MergeResult, SkillDoc
@@ -45,6 +51,7 @@ def verify(result: MergeResult, sources: list[SkillDoc]) -> list[str]:
     problems.extend(_verify_orchestrator(result))
     problems.extend(_verify_partition_total(seen))
     problems.extend(_verify_drop_reasons(result))
+    problems.extend(_verify_frontmatter(result, sources))
     return problems
 
 
@@ -74,6 +81,34 @@ def _verify_drop_reasons(result: MergeResult) -> list[str]:
     plan = result.plan
     missing = [atom_id for atom_id in plan.dropped if atom_id not in plan.drop_reasons]
     return [f"dropped atom {atom_id!r} has no recorded reason" for atom_id in sorted(missing)]
+
+
+def _verify_frontmatter(result: MergeResult, sources: list[SkillDoc]) -> list[str]:
+    """Every carried frontmatter field must equal the source reconciliation, recomputed here.
+
+    The reconcile is recomputed from the re-parsed sources via the same pure function the carry
+    pass used, so an invented field or a tampered value cannot pass — the frontmatter analogue of
+    body byte-traceability. An absent field is not flagged: a drop is not an invention, and the
+    carry pass plus its warnings cover that visibility.
+    """
+    atom_skill = atom_skill_index(sources)
+    emitted = [(f"skill {index}", skill) for index, skill in enumerate(result.skills)]
+    if result.orchestrator is not None:
+        emitted.append(("orchestrator", result.orchestrator))
+    problems: list[str] = []
+    for label, skill in emitted:
+        contributing = contributing_sources(skill.layout, atom_skill, sources)
+        expected = reconcile_frontmatter(contributing).fields
+        for field in CARRYABLE:
+            if field not in skill.doc.frontmatter:
+                continue
+            if field not in expected:
+                problems.append(f"{label}: frontmatter {field!r} is not justified by any source")
+            elif skill.doc.frontmatter[field] != expected[field]:
+                problems.append(
+                    f"{label}: frontmatter {field!r} does not match the source reconciliation"
+                )
+    return problems
 
 
 def _source_index(sources: list[SkillDoc]) -> dict[str, Atom]:

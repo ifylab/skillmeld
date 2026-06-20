@@ -213,6 +213,8 @@ class MergePlan(BaseModel):
     conflicts_resolved: list[Conflict] = Field(default_factory=list)
     provenance: list[Provenance] = Field(default_factory=list)
     license_resolution: LicenseInfo = Field(default_factory=LicenseInfo)
+    frontmatter_findings: list[ScanFinding] = Field(default_factory=list)
+    frontmatter_verdict: Verdict = Verdict.PASS
     warnings: list[str] = Field(default_factory=list)
     confidence: str | None = None
 

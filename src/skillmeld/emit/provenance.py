@@ -35,6 +35,10 @@ def build_provenance(result: MergeResult, sources: list[SkillDoc], *, generated_
     if result.orchestrator is not None:
         lines.append("- **orchestrator** — routing only (generated from frozen templates)")
 
+    carried = _frontmatter_section(result)
+    if carried:
+        lines += ["", "## Frontmatter carried", "", *carried]
+
     plan = result.plan
     lines += [
         "",
@@ -48,6 +52,29 @@ def build_provenance(result: MergeResult, sources: list[SkillDoc], *, generated_
         lines += ["", "## Warnings", ""]
         lines += [f"- {warning}" for warning in plan.warnings]
     return "\n".join(lines) + "\n"
+
+
+def _frontmatter_section(result: MergeResult) -> list[str]:
+    """Per-child carried frontmatter plus any review reasons the merge raised. Deterministic."""
+    fields = ("allowed-tools", "disallowed-tools", "disable-model-invocation", "compatibility")
+    lines: list[str] = []
+    for skill in result.skills:
+        name = str(skill.doc.frontmatter.get("name", skill.doc.source.name))
+        parts: list[str] = []
+        for field in fields:
+            value = skill.doc.frontmatter.get(field)
+            if value is True:
+                parts.append(f"{field}: true")
+            elif isinstance(value, str) and value.strip():
+                parts.append(f"{field}: {value.strip()}")
+        metadata = skill.doc.frontmatter.get("metadata")
+        if isinstance(metadata, dict) and metadata:
+            parts.append(f"metadata: {', '.join(sorted(str(key) for key in metadata))}")
+        if parts:
+            lines.append(f"- **{name}** — {'; '.join(parts)}")
+    for finding in result.plan.frontmatter_findings:
+        lines.append(f"- _review_: {finding.message}")
+    return lines
 
 
 def _contributors(layout: list[AssembledAtom]) -> list[str]:

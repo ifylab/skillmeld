@@ -27,6 +27,13 @@ _TIMEOUT = 30.0
 _LICENSE_NAMES = ("LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING")
 
 
+def _as_list(value: object) -> list[str]:
+    """A frontmatter list field: a real YAML list, or a comma/space-separated string."""
+    if isinstance(value, list):
+        return [item for item in (str(entry).strip() for entry in value) if item]
+    return _split_list(str(value or ""))
+
+
 def crawl(
     repos: list[str], *, ref: str | None = None, client: httpx.Client | None = None
 ) -> list[CatalogEntry]:
@@ -118,15 +125,15 @@ def _build_entry(
         return None
 
     frontmatter, _ = _split_frontmatter(skill_md_text)
-    name = frontmatter.get("name") or (skill_dir.rsplit("/", 1)[-1] or repo.split("/")[-1])
+    name = str(frontmatter.get("name") or (skill_dir.rsplit("/", 1)[-1] or repo.split("/")[-1]))
     return CatalogEntry(
         id=f"{repo}:{skill_dir}" if skill_dir else repo,
         source=SkillSource(
             name=name, repo=repo, url=f"https://github.com/{repo}", license=license_info
         ),
-        description=frontmatter.get("description", ""),
-        tags=_split_list(frontmatter.get("tags", "")),
-        languages=_split_list(frontmatter.get("languages", "")),
+        description=str(frontmatter.get("description", "")),
+        tags=_as_list(frontmatter.get("tags")),
+        languages=_as_list(frontmatter.get("languages")),
         files=files,
         fetch_base=fetch_base,
         bundle_hash=bundle_hash(files),

@@ -365,6 +365,7 @@ def _cmd_emit(args: argparse.Namespace) -> int:
     from datetime import UTC, datetime
 
     from skillmeld.emit.package import (
+        api_surface_warnings,
         apply_source_licenses,
         emit_api_payload,
         emit_blockers,
@@ -391,7 +392,13 @@ def _cmd_emit(args: argparse.Namespace) -> int:
     generated_at = args.generated_at or datetime.now(UTC).isoformat(timespec="seconds")
 
     if args.surface == "api":
-        return _emit({"surface": "api", "skills": emit_api_payload(result)})
+        return _emit(
+            {
+                "surface": "api",
+                "skills": emit_api_payload(result),
+                "warnings": api_surface_warnings(result),
+            }
+        )
 
     out = args.out
     if out is None:

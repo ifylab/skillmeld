@@ -17,7 +17,16 @@ NAME_LIMIT = 64
 DESCRIPTION_LIMIT = 1024
 RESERVED_NAME_WORDS = ("claude", "anthropic")
 ALLOWED_FRONTMATTER = frozenset(
-    {"name", "description", "license", "allowed-tools", "disable-model-invocation", "metadata"}
+    {
+        "name",
+        "description",
+        "license",
+        "compatibility",
+        "allowed-tools",
+        "disallowed-tools",
+        "disable-model-invocation",
+        "metadata",
+    }
 )
 
 _STRONG = re.compile(r"\b(must|always|never|do not|don'?t|required|ensure|shall)\b", re.IGNORECASE)
