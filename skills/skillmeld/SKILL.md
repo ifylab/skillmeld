@@ -81,16 +81,20 @@ Each command prints JSON to stdout. This skill reads that JSON and supplies the 
    held-out query leaks, and the held-out routing pass-rate does not regress — measured both from
    your reported routing and from an independent engine-side pass that routes the queries against
    the descriptions, so acceptance never rests on your self-report. Phrase each description with
-   the literal words a user would say; the independent router keys on them. The orchestrator
+   the literal words a user would say; the independent router keys on them. Keep it
+   within the routing budget — Claude Code truncates the description at 1536 characters in its skill
+   listing and the API surface caps it at 1024, so lead with the key use case. The orchestrator
    ships with a templated routing description already; refine it the same way (`--skill
    orchestrator`) only if needed. Then `run.sh eval run` must report `passed: true` over the set.
    With the set now complete, show the user the plan and the authored descriptions as one
    consolidated review before writing anything.
 9. Emit — `run.sh emit <surface>` packages the result; install only after the user approves. Emit
    refuses any skill (child or orchestrator) whose description is still empty, so a set can never
-   ship dead even if this step was rushed. `emit api` also returns `warnings` when a composed skill
-   carries tool or invocation frontmatter (the `/v1/skills` surface does not enforce those) — relay
-   them so the user knows the restriction is not active there.
+   ship dead even if this step was rushed. Each surface returns `warnings` to relay before install:
+   `emit claude-code` and `emit claudeai` flag any description over the 1536-char Claude Code routing
+   cap (truncated in the skill listing, so routing keywords are lost); `emit api` flags a description
+   over the 1024-char `/v1/skills` cap (the upload is rejected), plus any tool or invocation
+   frontmatter that surface does not enforce.
 
 Every atom in the merged output traces byte-for-byte to a source skill; the engine invents no
 instruction text. Nothing is fetched, merged, or installed without showing the user what will

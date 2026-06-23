@@ -8,6 +8,15 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+# Routing-surface character budgets for a skill's description (verified 2026-06-23):
+#   - Claude API /v1/skills: `description` max 1024 chars (authoring cap; longer is rejected).
+#   - Claude Code skill listing: `description` + `when_to_use` combined, truncated past 1536
+#     (`maxSkillDescriptionChars`, default since Claude Code v2.1.105).
+# skillmeld emits no `when_to_use`, so the description alone is what gets budgeted on each surface.
+# These track an evolving spec; re-verify against the Claude docs before relying on them.
+API_DESCRIPTION_LIMIT = 1024
+CLAUDE_CODE_ROUTING_LIMIT = 1536
+
 
 class Verdict(StrEnum):
     """Tri-state security outcome. BLOCK is refused; REVIEW is surfaced for a human decision."""

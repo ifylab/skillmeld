@@ -17,7 +17,13 @@ import yaml
 from skillmeld.emit.provenance import build_provenance
 from skillmeld.merge.pipeline import support_references
 from skillmeld.merge.synthesize import slug
-from skillmeld.models import AssembledSkill, MergeResult, SkillDoc
+from skillmeld.models import (
+    API_DESCRIPTION_LIMIT,
+    CLAUDE_CODE_ROUTING_LIMIT,
+    AssembledSkill,
+    MergeResult,
+    SkillDoc,
+)
 
 
 def render_skill_md(doc: SkillDoc) -> str:
@@ -213,5 +219,41 @@ def api_surface_warnings(result: MergeResult) -> list[str]:
             warnings.append(
                 f"{name}: {', '.join(carried)} carried in SKILL.md but the API surface does not "
                 "enforce tool or invocation frontmatter"
+            )
+    return warnings
+
+
+def routing_truncation_warnings(result: MergeResult) -> list[str]:
+    """Descriptions over the Claude Code routing cap, which get truncated in the skill listing.
+
+    Claude Code shows ``description`` + ``when_to_use`` combined and truncates past
+    ``maxSkillDescriptionChars`` (1536). skillmeld emits no ``when_to_use``, so the description
+    alone is budgeted; past the cap Claude drops the tail — the keywords that make the skill
+    trigger — with no error. The Claude Code tree and the claude.ai zip both feed that listing, so
+    surface it before install rather than let routing signal vanish silently.
+    """
+    warnings: list[str] = []
+    for skill in _emitted_skills(result):
+        name = str(skill.doc.frontmatter.get("name", skill.doc.source.name))
+        chars = len(str(skill.doc.frontmatter.get("description", "")))
+        if chars > CLAUDE_CODE_ROUTING_LIMIT:
+            warnings.append(
+                f"{name}: description is {chars} chars; Claude Code truncates the routing text at "
+                f"{CLAUDE_CODE_ROUTING_LIMIT} (maxSkillDescriptionChars), dropping the last "
+                f"{chars - CLAUDE_CODE_ROUTING_LIMIT} — lead with the key use case to keep it"
+            )
+    return warnings
+
+
+def api_description_warnings(result: MergeResult) -> list[str]:
+    """Descriptions the API ``/v1/skills`` surface rejects (``description`` max 1024 chars)."""
+    warnings: list[str] = []
+    for skill in _emitted_skills(result):
+        name = str(skill.doc.frontmatter.get("name", skill.doc.source.name))
+        chars = len(str(skill.doc.frontmatter.get("description", "")))
+        if chars > API_DESCRIPTION_LIMIT:
+            warnings.append(
+                f"{name}: description is {chars} chars; the API /v1/skills surface rejects "
+                f"descriptions over {API_DESCRIPTION_LIMIT} chars"
             )
     return warnings

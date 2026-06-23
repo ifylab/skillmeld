@@ -177,3 +177,47 @@ def test_emit_blockers_flags_empty_descriptions_then_clears() -> None:
     for skill in result.skills:
         skill.doc.frontmatter["description"] = "A clear, specific description for triggering."
     assert emit_blockers(result) == []
+
+
+def test_routing_truncation_warns_over_the_claude_code_cap() -> None:
+    from skillmeld.emit.package import api_description_warnings, routing_truncation_warnings
+    from skillmeld.models import AssembledSkill
+
+    doc = SkillDoc(
+        source=SkillSource(name="big"),
+        frontmatter={"name": "big", "description": "z" * 1600},
+        body="# Big\n",
+    )
+    result = MergeResult(skills=[AssembledSkill(doc=doc)])
+    assert any("big" in w and "truncates" in w for w in routing_truncation_warnings(result))
+    # 1600 also blows the 1024 API cap.
+    assert any("/v1/skills" in w for w in api_description_warnings(result))
+
+
+def test_api_description_warns_in_band_while_routing_stays_clean() -> None:
+    from skillmeld.emit.package import api_description_warnings, routing_truncation_warnings
+    from skillmeld.models import AssembledSkill
+
+    # 1200 chars: rejected by the API surface, fine for Claude Code.
+    doc = SkillDoc(
+        source=SkillSource(name="mid"),
+        frontmatter={"name": "mid", "description": "z" * 1200},
+        body="# Mid\n",
+    )
+    result = MergeResult(skills=[AssembledSkill(doc=doc)])
+    assert any("/v1/skills" in w for w in api_description_warnings(result))
+    assert routing_truncation_warnings(result) == []
+
+
+def test_no_budget_warnings_for_a_short_description() -> None:
+    from skillmeld.emit.package import api_description_warnings, routing_truncation_warnings
+    from skillmeld.models import AssembledSkill
+
+    doc = SkillDoc(
+        source=SkillSource(name="ok"),
+        frontmatter={"name": "ok", "description": "Compose community skills for a use case."},
+        body="# OK\n",
+    )
+    result = MergeResult(skills=[AssembledSkill(doc=doc)])
+    assert routing_truncation_warnings(result) == []
+    assert api_description_warnings(result) == []

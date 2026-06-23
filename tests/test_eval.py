@@ -56,6 +56,24 @@ def test_quality_flags_overlong_description() -> None:
     assert not score_quality(doc).passed
 
 
+def test_quality_description_in_api_band_warns_but_passes() -> None:
+    # Between the API authoring cap (1024) and the Claude Code routing cap (1536): valid on Claude
+    # Code so it passes, but warned because the /v1/skills surface would reject it.
+    doc = SkillDoc(source=SkillSource(name="x"), frontmatter={"description": "z" * 1200}, body="hi")
+    report = score_quality(doc)
+    assert report.passed
+    assert not report.issues
+    assert any("API authoring cap" in warning for warning in report.warnings)
+
+
+def test_quality_description_over_routing_cap_is_a_hard_issue() -> None:
+    # Over the Claude Code routing cap (1536): truncated on every surface, so it hard-fails.
+    doc = SkillDoc(source=SkillSource(name="x"), frontmatter={"description": "z" * 1600}, body="hi")
+    report = score_quality(doc)
+    assert not report.passed
+    assert any("routing cap" in issue for issue in report.issues)
+
+
 def test_quality_clean_skill_passes() -> None:
     doc = SkillDoc(
         source=SkillSource(name="retriever"),

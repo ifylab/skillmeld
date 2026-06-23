@@ -365,6 +365,7 @@ def _cmd_emit(args: argparse.Namespace) -> int:
     from datetime import UTC, datetime
 
     from skillmeld.emit.package import (
+        api_description_warnings,
         api_surface_warnings,
         apply_source_licenses,
         emit_api_payload,
@@ -372,6 +373,7 @@ def _cmd_emit(args: argparse.Namespace) -> int:
         emit_claude_code,
         emit_claudeai_zip,
         plan_support_carry,
+        routing_truncation_warnings,
     )
 
     try:
@@ -396,7 +398,7 @@ def _cmd_emit(args: argparse.Namespace) -> int:
             {
                 "surface": "api",
                 "skills": emit_api_payload(result),
-                "warnings": api_surface_warnings(result),
+                "warnings": api_surface_warnings(result) + api_description_warnings(result),
             }
         )
 
@@ -404,14 +406,17 @@ def _cmd_emit(args: argparse.Namespace) -> int:
     if out is None:
         return _error(f"emit {args.surface} requires --out")
     carry = plan_support_carry(result, sources, args.bundles)
+    routing_warnings = routing_truncation_warnings(result)
     if args.surface == "claudeai":
         data = emit_claudeai_zip(result, sources=sources, generated_at=generated_at, carry=carry)
         Path(out).write_bytes(data)
-        return _emit({"surface": "claudeai", "zip": out, "bytes": len(data)})
+        return _emit(
+            {"surface": "claudeai", "zip": out, "bytes": len(data), "warnings": routing_warnings}
+        )
     written = emit_claude_code(
         result, Path(out), sources=sources, generated_at=generated_at, carry=carry
     )
-    return _emit({"surface": "claude-code", "written": written})
+    return _emit({"surface": "claude-code", "written": written, "warnings": routing_warnings})
 
 
 def _cmd_fetch(selection_path: str) -> int:
