@@ -304,6 +304,14 @@ def _cmd_eval(args: argparse.Namespace) -> int:
     except (OSError, ValueError, ValidationError) as exc:
         return _error(f"inputs not readable: {exc}")
 
+    # Align source identity to the catalog, exactly as merge/emit do. Without this, a source whose
+    # SKILL.md omits `name:` loads under its bundle-hash dir name, so re-parsing here yields atom
+    # ids that the byte-traceability verifier cannot match against the catalog-named merge result.
+    if getattr(args, "sources", None) is not None:
+        error = _carry_catalog_sources(args.bundles, sources, args.sources)
+        if error is not None:
+            return _error(error)
+
     queries = None
     if getattr(args, "queries", None):
         queries = [TriggerQuery.model_validate(q) for q in json.loads(_read_text(args.queries))]
@@ -573,6 +581,10 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--description", default="", help="Candidate description (improve).")
     evaluate.add_argument("--baseline-judgments", help="Baseline routing judgments (improve).")
     evaluate.add_argument("--candidate-judgments", help="Candidate routing judgments (improve).")
+    evaluate.add_argument(
+        "--sources",
+        help="discover/select JSON; align source identity to the catalog (as merge/emit).",
+    )
 
     emit = sub.add_parser("emit", help="Package the merged set for a surface.")
     emit.add_argument("surface", choices=["claude-code", "claudeai", "api", "marketplace"])

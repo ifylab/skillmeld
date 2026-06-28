@@ -266,3 +266,71 @@ def test_emit_marketplace_refuses_a_reserved_name(
     payload = json.loads(capsys.readouterr().out)
     assert code == 1
     assert "reserved" in payload["error"]
+
+
+def test_eval_sources_aligns_identity_for_a_nameless_source(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A source whose SKILL.md omits `name:` loads under its dir name; merge --sources renames it to
+    # the catalog slug, so the result's atoms are slug-named. eval must take --sources too, or its
+    # byte-trace verifier rejects every atom (dir-named re-parse can't match the slug result).
+    from skillmeld.models import Candidate, CatalogEntry, LicenseInfo, SkillFile, SkillSource
+    from skillmeld.security.verdict import dir_bundle_hash
+
+    bundle = tmp_path / "rawdir"
+    bundle.mkdir()
+    (bundle / "SKILL.md").write_text(
+        "---\ntitle: Geometry Helper\n---\n# Geometry Helper\n\n"
+        "- Always validate the input geometry before building.\n"
+        "- Build geometry with the RhinoCommon API inside the script component.\n"
+        "- Assign results to the component output parameters.\n"
+    )
+    entry = CatalogEntry(
+        id="o/r:geometry",
+        source=SkillSource(name="geometry-helper", repo="o/r", license=LicenseInfo(spdx_id="MIT")),
+        files=[SkillFile(path="SKILL.md", sha256="0" * 64)],
+        bundle_hash=dir_bundle_hash(bundle),
+        fetch_base="https://example/o",
+    )
+    disc = tmp_path / "discover.json"
+    disc.write_text(
+        json.dumps({"candidates": [Candidate(entry=entry, score=1.0, matched=[]).model_dump()]})
+    )
+    profile = tmp_path / "profile.json"
+    profile.write_text(
+        UseCaseProfile(
+            summary="Build geometry inside a Grasshopper script component using RhinoCommon.",
+            languages=["Python"],
+            frameworks=["Grasshopper", "Rhino", "RhinoCommon"],
+            tasks=["build geometry with rhinocommon", "validate input geometry"],
+        ).model_dump_json()
+    )
+
+    code = main(
+        ["merge", "--bundles", str(bundle), "--profile", str(profile), "--sources", str(disc)]
+    )
+    assert code == 0
+    result_path = tmp_path / "result.json"
+    result_path.write_text(capsys.readouterr().out)
+
+    # Without --sources: sources load under the dir name -> verifier rejects the slug-named atoms.
+    main(["eval", "run", "--result", str(result_path), "--bundles", str(bundle)])
+    without = json.loads(capsys.readouterr().out)
+    assert without.get("verifier_problems")
+
+    # With --sources: identity aligned -> verify passes.
+    code = main(
+        [
+            "eval",
+            "run",
+            "--result",
+            str(result_path),
+            "--bundles",
+            str(bundle),
+            "--sources",
+            str(disc),
+        ]
+    )
+    with_src = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert with_src.get("verifier_problems") == []

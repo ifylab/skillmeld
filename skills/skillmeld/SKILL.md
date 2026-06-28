@@ -85,7 +85,10 @@ Each command prints JSON to stdout. This skill reads that JSON and supplies the 
    within the routing budget — Claude Code truncates the description at 1536 characters in its skill
    listing and the API surface caps it at 1024, so lead with the key use case. The orchestrator
    ships with a templated routing description already; refine it the same way (`--skill
-   orchestrator`) only if needed. Then `run.sh eval run` must report `passed: true` over the set.
+   orchestrator`) only if needed. Pass `--sources <discover.json>` to `eval improve` and `eval run`
+   (the same JSON you gave merge) so the verifier resolves each source's catalog identity — without
+   it, a source whose `SKILL.md` omits `name:` fails the byte-trace check. Then `run.sh eval run`
+   must report `passed: true` over the set.
    With the set now complete, show the user the plan and the authored descriptions as one
    consolidated review before writing anything.
 9. Emit — `run.sh emit <surface>` packages the result; install only after the user approves. Emit
@@ -163,10 +166,13 @@ The JSON shapes you author by hand, so you do not have to read the engine source
   descriptions as a cross-check: `eval run` adds an `independent_trigger` score and any
   `routing_disagreements`, and `eval improve` rejects an edit whose independent held-out routing
   regresses even when your reported routing held.
-- **Carrying licenses**: `merge --sources <discover.json>` and `emit --sources <discover.json>`
-  re-attach the per-source licenses discovery knew (matched by bundle hash), so the plan and
-  `PROVENANCE.md` show the real license instead of "unknown". A merged set is only as licensed as
-  its least-licensed part: one unlicensed source resolves the whole set to unknown — surface that.
+- **Carrying source identity (`--sources`)**: `merge`, `emit`, and `eval` all accept
+  `--sources <discover.json>` to re-attach what discovery knew about each source (matched by bundle
+  hash): its license and its catalog name. Pass it so the plan and `PROVENANCE.md` show the real
+  license instead of "unknown", and so `eval`'s verifier matches a source whose `SKILL.md` omits
+  `name:` (which otherwise loads under its bundle-hash dir name and fails the byte-trace check). A
+  merged set is only as licensed as its least-licensed part: one unlicensed source resolves the
+  whole set to unknown — surface that.
 - **Merge result shape**: `merge` prints `{"result": ..., "problems": [...]}`. Inside `result`,
   each child is `skills[i].doc` with `frontmatter.{name, description}` and `body`; the router is
   `orchestrator.doc`; `plan` carries `kept`/`dropped`/`drop_reasons`/`conflicts_resolved`/
