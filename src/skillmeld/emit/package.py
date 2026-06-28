@@ -9,6 +9,7 @@ does not exist upstream, so each surface is emitted explicitly.
 from __future__ import annotations
 
 import io
+import json
 import zipfile
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from skillmeld.merge.synthesize import slug
 from skillmeld.models import (
     API_DESCRIPTION_LIMIT,
     CLAUDE_CODE_ROUTING_LIMIT,
+    RESERVED_MARKETPLACE_NAMES,
     AssembledSkill,
     MergeResult,
     SkillDoc,
@@ -103,6 +105,17 @@ def emit_blockers(result: MergeResult) -> list[str]:
     return blockers
 
 
+def marketplace_name_blocker(name: str) -> str | None:
+    """Reason a marketplace name must be refused, or None if usable.
+
+    The caller normalizes the name to kebab-case first (via ``slug``); the remaining hard rule is
+    the reserved-name list — official Anthropic namespaces Claude Code refuses to add.
+    """
+    if name in RESERVED_MARKETPLACE_NAMES:
+        return f"marketplace name '{name}' is reserved for official use"
+    return None
+
+
 def plan_support_carry(
     result: MergeResult, sources: list[SkillDoc], bundle_dirs: list[str]
 ) -> dict[str, list[tuple[str, Path]]]:
@@ -182,6 +195,101 @@ def emit_claudeai_zip(
             "PROVENANCE.md", build_provenance(result, sources, generated_at=generated_at)
         )
     return buffer.getvalue()
+
+
+def emit_marketplace(
+    result: MergeResult,
+    out_dir: Path,
+    *,
+    sources: list[SkillDoc],
+    generated_at: str,
+    marketplace_name: str,
+    owner: dict[str, str],
+    plugin_name: str | None = None,
+    carry: dict[str, list[tuple[str, Path]]] | None = None,
+) -> list[str]:
+    """Write a Claude Code plugin marketplace (``strict: false``).
+
+    Layout: ``skills/<name>/SKILL.md`` per skill, ``PROVENANCE.md`` at the root, and
+    ``.claude-plugin/marketplace.json``. The entry is ``strict: false`` — it owns the whole
+    definition — so **no** ``plugin.json`` is written: a component-declaring ``plugin.json``
+    alongside a strict:false entry is a hard load conflict. PROVENANCE.md sits at the plugin root
+    and is copied along with the skill when the plugin is installed.
+    """
+    carry = carry or {}
+    written: list[str] = []
+    skill_paths: list[str] = []
+    for skill in _emitted_skills(result):
+        name = slug(str(skill.doc.frontmatter.get("name", skill.doc.source.name)))
+        target = out_dir / "skills" / name / "SKILL.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(render_skill_md(skill.doc), encoding="utf-8")
+        written.append(str(target))
+        skill_paths.append(f"./skills/{name}")
+        for rel, source_file in carry.get(name, []):
+            dest = out_dir / "skills" / name / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(source_file.read_bytes())
+            written.append(str(dest))
+
+    provenance = out_dir / "PROVENANCE.md"
+    provenance.write_text(
+        build_provenance(result, sources, generated_at=generated_at), encoding="utf-8"
+    )
+    written.append(str(provenance))
+
+    manifest = _marketplace_manifest(
+        result,
+        marketplace_name=marketplace_name,
+        owner=owner,
+        plugin_name=plugin_name,
+        skill_paths=skill_paths,
+    )
+    manifest_path = out_dir / ".claude-plugin" / "marketplace.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    written.append(str(manifest_path))
+    return sorted(written)
+
+
+def _marketplace_manifest(
+    result: MergeResult,
+    *,
+    marketplace_name: str,
+    owner: dict[str, str],
+    plugin_name: str | None,
+    skill_paths: list[str],
+) -> dict[str, object]:
+    """Build the marketplace.json dict: one ``strict: false`` plugin exposing every emitted skill.
+
+    Plugin name/description come from the primary skill (the orchestrator if present, else the sole
+    skill). ``license`` is the engine's combined resolution (``plan.license_resolution``) — one
+    unlicensed source resolves the whole set to unknown, so the field is omitted rather than
+    asserting a license the set does not cleanly carry. ``version`` is omitted so the git commit
+    SHA drives updates once the user hosts the marketplace.
+    """
+    primary = _emitted_skills(result)[0]
+    name = plugin_name or slug(str(primary.doc.frontmatter.get("name", primary.doc.source.name)))
+    entry: dict[str, object] = {
+        "name": name,
+        "source": "./",
+        "strict": False,
+        "skills": skill_paths,
+    }
+    description = str(primary.doc.frontmatter.get("description", "")).strip()
+    if description:
+        entry["description"] = description
+    license_id = result.plan.license_resolution.spdx_id
+    if license_id:
+        entry["license"] = license_id
+    return {
+        "name": marketplace_name,
+        "owner": owner,
+        "description": "Composed by skillmeld from existing community skills.",
+        "plugins": [entry],
+    }
 
 
 def emit_api_payload(result: MergeResult) -> list[dict[str, str]]:

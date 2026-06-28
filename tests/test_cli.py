@@ -198,3 +198,71 @@ def test_scan_sources_trusts_catalog_license(
     with_src = json.loads(capsys.readouterr().out)
     assert with_src["license"]["spdx_id"] == "MIT"
     assert not any(f["rule_id"] == "core:license-unknown" for f in with_src["findings"])
+
+
+def _marketplace_inputs(tmp_path: Path) -> tuple[Path, Path]:
+    from skillmeld.models import AssembledSkill, MergeResult, SkillDoc, SkillSource
+
+    bundle = tmp_path / "retriever"
+    bundle.mkdir()
+    (bundle / "SKILL.md").write_text("---\nname: retriever\ndescription: d\n---\n# R\n\nDo.\n")
+    child = AssembledSkill(
+        doc=SkillDoc(
+            source=SkillSource(name="retriever"),
+            frontmatter={"name": "retriever", "description": "Retrieve documents."},
+            body="# R\n\nDo.\n",
+        )
+    )
+    result_path = tmp_path / "result.json"
+    result_path.write_text(MergeResult(skills=[child]).model_dump_json())
+    return bundle, result_path
+
+
+def test_emit_marketplace_defaults_owner_and_warns(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bundle, result_path = _marketplace_inputs(tmp_path)
+    out = tmp_path / "mp"
+    code = main(
+        [
+            "emit",
+            "marketplace",
+            "--result",
+            str(result_path),
+            "--bundles",
+            str(bundle),
+            "--out",
+            str(out),
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["surface"] == "marketplace"
+    assert any("owner name defaulted" in w for w in payload["warnings"])
+    assert any("marketplace name defaulted" in w for w in payload["warnings"])
+    assert (out / ".claude-plugin" / "marketplace.json").is_file()
+    assert not list(out.rglob("plugin.json"))
+
+
+def test_emit_marketplace_refuses_a_reserved_name(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bundle, result_path = _marketplace_inputs(tmp_path)
+    out = tmp_path / "mp"
+    code = main(
+        [
+            "emit",
+            "marketplace",
+            "--result",
+            str(result_path),
+            "--bundles",
+            str(bundle),
+            "--out",
+            str(out),
+            "--marketplace-name",
+            "claude-community",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 1
+    assert "reserved" in payload["error"]

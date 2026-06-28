@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import io
+import json
 import zipfile
 from pathlib import Path
 
@@ -12,6 +13,8 @@ from skillmeld.emit.package import (
     emit_blockers,
     emit_claude_code,
     emit_claudeai_zip,
+    emit_marketplace,
+    marketplace_name_blocker,
     render_skill_md,
 )
 from skillmeld.emit.provenance import build_provenance
@@ -221,3 +224,152 @@ def test_no_budget_warnings_for_a_short_description() -> None:
     result = MergeResult(skills=[AssembledSkill(doc=doc)])
     assert routing_truncation_warnings(result) == []
     assert api_description_warnings(result) == []
+
+
+def _read_manifest(out_dir: Path) -> dict:
+    return json.loads((out_dir / ".claude-plugin" / "marketplace.json").read_text())
+
+
+def test_emit_marketplace_writes_tree_and_manifest(tmp_path: Path) -> None:
+    result, sources = _merge()
+    written = emit_marketplace(
+        result,
+        tmp_path,
+        sources=sources,
+        generated_at=WHEN,
+        marketplace_name="my-skills",
+        owner={"name": "me"},
+    )
+    assert any(p.endswith("PROVENANCE.md") for p in written)
+    skill_files = [p for p in written if p.endswith("SKILL.md")]
+    assert skill_files
+    assert all("/skills/" in p for p in skill_files)
+    assert (tmp_path / ".claude-plugin" / "marketplace.json").is_file()
+
+
+def test_emit_marketplace_has_no_plugin_json(tmp_path: Path) -> None:
+    result, sources = _merge()
+    emit_marketplace(
+        result,
+        tmp_path,
+        sources=sources,
+        generated_at=WHEN,
+        marketplace_name="my-skills",
+        owner={"name": "me"},
+    )
+    # strict:false owns the definition; a component-declaring plugin.json beside it fails to load.
+    assert not list(tmp_path.rglob("plugin.json"))
+
+
+def test_emit_marketplace_manifest_schema(tmp_path: Path) -> None:
+    result, sources = _merge()
+    emit_marketplace(
+        result,
+        tmp_path,
+        sources=sources,
+        generated_at=WHEN,
+        marketplace_name="my-skills",
+        owner={"name": "me"},
+    )
+    manifest = _read_manifest(tmp_path)
+    assert manifest["name"] == "my-skills"
+    assert manifest["owner"]["name"] == "me"
+    entry = manifest["plugins"][0]
+    assert entry["name"]
+    assert entry["source"] == "./"
+    assert entry["strict"] is False
+    assert isinstance(entry["skills"], list) and entry["skills"]
+    assert "version" not in entry
+
+
+def test_emit_marketplace_skills_paths_match_tree(tmp_path: Path) -> None:
+    result, sources = _merge()
+    emit_marketplace(
+        result,
+        tmp_path,
+        sources=sources,
+        generated_at=WHEN,
+        marketplace_name="my-skills",
+        owner={"name": "me"},
+    )
+    for rel in _read_manifest(tmp_path)["plugins"][0]["skills"]:
+        assert (tmp_path / rel.removeprefix("./") / "SKILL.md").is_file()
+
+
+def test_emit_marketplace_license_follows_engine_resolution(tmp_path: Path) -> None:
+    from skillmeld.models import AssembledSkill, MergePlan
+
+    child = AssembledSkill(
+        doc=SkillDoc(
+            source=SkillSource(name="a", license=LicenseInfo(spdx_id="MIT")),
+            frontmatter={"name": "a", "description": "d"},
+            body="# A\n",
+        )
+    )
+    result = MergeResult(
+        skills=[child], plan=MergePlan(license_resolution=LicenseInfo(spdx_id="MIT"))
+    )
+    src = SkillDoc(source=SkillSource(name="a", license=LicenseInfo(spdx_id="MIT")), body="x")
+    emit_marketplace(
+        result,
+        tmp_path,
+        sources=[src],
+        generated_at=WHEN,
+        marketplace_name="m",
+        owner={"name": "o"},
+    )
+    assert _read_manifest(tmp_path)["plugins"][0]["license"] == "MIT"
+
+
+def test_emit_marketplace_omits_license_when_set_is_unknown(tmp_path: Path) -> None:
+    # Regression: an MIT source mixed with an unlicensed one resolves to unknown, so the manifest
+    # must NOT claim MIT — the engine's combine() rule (one unlicensed part dominates to unknown).
+    from skillmeld.models import AssembledSkill, MergePlan
+
+    child = AssembledSkill(
+        doc=SkillDoc(
+            source=SkillSource(name="a", license=LicenseInfo(spdx_id="MIT")),
+            frontmatter={"name": "a", "description": "d"},
+            body="# A\n",
+        )
+    )
+    result = MergeResult(
+        skills=[child], plan=MergePlan(license_resolution=LicenseInfo(spdx_id=None))
+    )
+    src = SkillDoc(source=SkillSource(name="a", license=LicenseInfo(spdx_id="MIT")), body="x")
+    emit_marketplace(
+        result,
+        tmp_path,
+        sources=[src],
+        generated_at=WHEN,
+        marketplace_name="m",
+        owner={"name": "o"},
+    )
+    assert "license" not in _read_manifest(tmp_path)["plugins"][0]
+
+
+def test_emit_marketplace_is_deterministic(tmp_path: Path) -> None:
+    result, sources = _merge()
+    emit_marketplace(
+        result,
+        tmp_path / "a",
+        sources=sources,
+        generated_at=WHEN,
+        marketplace_name="m",
+        owner={"name": "o"},
+    )
+    emit_marketplace(
+        result,
+        tmp_path / "b",
+        sources=sources,
+        generated_at=WHEN,
+        marketplace_name="m",
+        owner={"name": "o"},
+    )
+    assert _read_manifest(tmp_path / "a") == _read_manifest(tmp_path / "b")
+
+
+def test_marketplace_name_blocker_refuses_reserved_names() -> None:
+    assert marketplace_name_blocker("claude-community") is not None
+    assert marketplace_name_blocker("agent-skills") is not None
+    assert marketplace_name_blocker("my-cool-skills") is None

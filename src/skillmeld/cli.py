@@ -372,6 +372,8 @@ def _cmd_emit(args: argparse.Namespace) -> int:
         emit_blockers,
         emit_claude_code,
         emit_claudeai_zip,
+        emit_marketplace,
+        marketplace_name_blocker,
         plan_support_carry,
         routing_truncation_warnings,
     )
@@ -413,6 +415,54 @@ def _cmd_emit(args: argparse.Namespace) -> int:
         return _emit(
             {"surface": "claudeai", "zip": out, "bytes": len(data), "warnings": routing_warnings}
         )
+    if args.surface == "marketplace":
+        from skillmeld.merge.synthesize import slug
+
+        primary = result.orchestrator or (result.skills[0] if result.skills else None)
+        if primary is None:
+            return _error("nothing to emit: the merge result has no skills")
+        plugin_name = slug(str(primary.doc.frontmatter.get("name", primary.doc.source.name)))
+        warnings = list(routing_warnings)
+
+        if args.marketplace_name:
+            marketplace_name = slug(args.marketplace_name)
+            if marketplace_name != args.marketplace_name:
+                warnings.append(
+                    f"marketplace name normalized to '{marketplace_name}' (must be kebab-case)"
+                )
+        else:
+            marketplace_name = plugin_name
+            warnings.append(
+                f"marketplace name defaulted to '{marketplace_name}'; "
+                "pass --marketplace-name to set your namespace"
+            )
+        reserved = marketplace_name_blocker(marketplace_name)
+        if reserved is not None:
+            return _error(reserved + "; pass a different --marketplace-name")
+
+        if args.owner_name:
+            owner = {"name": args.owner_name}
+        else:
+            owner = {"name": marketplace_name}
+            warnings.append(
+                f"owner name defaulted to '{marketplace_name}'; "
+                "pass --owner-name to set the maintainer"
+            )
+        if args.owner_email:
+            owner["email"] = args.owner_email
+
+        written = emit_marketplace(
+            result,
+            Path(out),
+            sources=sources,
+            generated_at=generated_at,
+            marketplace_name=marketplace_name,
+            owner=owner,
+            plugin_name=plugin_name,
+            carry=carry,
+        )
+        return _emit({"surface": "marketplace", "written": written, "warnings": warnings})
+
     written = emit_claude_code(
         result, Path(out), sources=sources, generated_at=generated_at, carry=carry
     )
@@ -525,14 +575,19 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--candidate-judgments", help="Candidate routing judgments (improve).")
 
     emit = sub.add_parser("emit", help="Package the merged set for a surface.")
-    emit.add_argument("surface", choices=["claude-code", "claudeai", "api"])
+    emit.add_argument("surface", choices=["claude-code", "claudeai", "api", "marketplace"])
     emit.add_argument("--result", required=True, help="Merge result/run JSON path, or -.")
     emit.add_argument("--bundles", nargs="+", required=True, help="Source bundle directories.")
-    emit.add_argument("--out", help="Output dir (claude-code) or zip path (claudeai).")
+    emit.add_argument("--out", help="Output dir (claude-code, marketplace) or zip path (claudeai).")
     emit.add_argument("--generated-at", help="Override the provenance timestamp (for tests).")
     emit.add_argument(
         "--sources", help="discover/select JSON; carries catalog licenses into PROVENANCE."
     )
+    emit.add_argument(
+        "--marketplace-name", help="Marketplace name, kebab-case (marketplace surface)."
+    )
+    emit.add_argument("--owner-name", help="Marketplace maintainer name (marketplace surface).")
+    emit.add_argument("--owner-email", help="Marketplace maintainer email (marketplace surface).")
 
     return parser
 

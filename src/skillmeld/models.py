@@ -17,6 +17,29 @@ from pydantic import BaseModel, Field
 API_DESCRIPTION_LIMIT = 1024
 CLAUDE_CODE_ROUTING_LIMIT = 1536
 
+# Marketplace names reserved for official Anthropic use; a third-party marketplace.json must not
+# claim them (Claude Code refuses the add). The server also blocks impersonation names such as
+# `official-claude-plugins`, which is a fuzzy rule we cannot reproduce locally — we enforce only
+# this explicit list and leave the impersonation check to the add-time server gate.
+RESERVED_MARKETPLACE_NAMES = frozenset(
+    {
+        "claude-code-marketplace",
+        "claude-code-plugins",
+        "claude-plugins-official",
+        "claude-plugins-community",
+        "claude-community",
+        "anthropic-marketplace",
+        "anthropic-plugins",
+        "agent-skills",
+        "anthropic-agent-skills",
+        "knowledge-work-plugins",
+        "life-sciences",
+        "claude-for-legal",
+        "claude-for-financial-services",
+        "financial-services-plugins",
+    }
+)
+
 
 class Verdict(StrEnum):
     """Tri-state security outcome. BLOCK is refused; REVIEW is surfaced for a human decision."""

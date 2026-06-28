@@ -90,11 +90,15 @@ Each command prints JSON to stdout. This skill reads that JSON and supplies the 
    consolidated review before writing anything.
 9. Emit — `run.sh emit <surface>` packages the result; install only after the user approves. Emit
    refuses any skill (child or orchestrator) whose description is still empty, so a set can never
-   ship dead even if this step was rushed. Each surface returns `warnings` to relay before install:
-   `emit claude-code` and `emit claudeai` flag any description over the 1536-char Claude Code routing
-   cap (truncated in the skill listing, so routing keywords are lost); `emit api` flags a description
-   over the 1024-char `/v1/skills` cap (the upload is rejected), plus any tool or invocation
-   frontmatter that surface does not enforce.
+   ship dead even if this step was rushed. Surfaces: `claude-code` (skills tree), `claudeai` (zip),
+   `api` (`/v1/skills` payload), and `marketplace` (a `strict:false` Claude Code plugin marketplace
+   the user can host and `/plugin marketplace add`). Each returns `warnings` to relay before install:
+   `emit claude-code`, `emit claudeai`, and `emit marketplace` flag any description over the
+   1536-char Claude Code routing cap (truncated in the skill listing, so routing keywords are lost);
+   `emit api` flags a description over the 1024-char `/v1/skills` cap (the upload is rejected), plus
+   any tool or invocation frontmatter that surface does not enforce. `emit marketplace` defaults the
+   marketplace name and owner to the skill's slug and warns when it does (pass `--marketplace-name`
+   and `--owner-name` to set them); it refuses a name reserved for official use.
 
 Every atom in the merged output traces byte-for-byte to a source skill; the engine invents no
 instruction text. Nothing is fetched, merged, or installed without showing the user what will
