@@ -376,6 +376,7 @@ def _cmd_emit(args: argparse.Namespace) -> int:
         api_description_warnings,
         api_surface_warnings,
         apply_source_licenses,
+        default_plugin_name,
         emit_api_payload,
         emit_blockers,
         emit_claude_code,
@@ -426,11 +427,21 @@ def _cmd_emit(args: argparse.Namespace) -> int:
     if args.surface == "marketplace":
         from skillmeld.merge.synthesize import slug
 
-        primary = result.orchestrator or (result.skills[0] if result.skills else None)
-        if primary is None:
+        if result.orchestrator is None and not result.skills:
             return _error("nothing to emit: the merge result has no skills")
-        plugin_name = slug(str(primary.doc.frontmatter.get("name", primary.doc.source.name)))
         warnings = list(routing_warnings)
+
+        if args.plugin_name:
+            plugin_name = slug(args.plugin_name)
+            if plugin_name != args.plugin_name:
+                warnings.append(f"plugin name normalized to '{plugin_name}' (must be kebab-case)")
+        else:
+            plugin_name = default_plugin_name(result)
+            if result.orchestrator is not None:
+                warnings.append(
+                    f"plugin name defaulted to '{plugin_name}' from the composed skills; "
+                    "pass --plugin-name to set it"
+                )
 
         if args.marketplace_name:
             marketplace_name = slug(args.marketplace_name)
@@ -595,6 +606,7 @@ def build_parser() -> argparse.ArgumentParser:
     emit.add_argument(
         "--sources", help="discover/select JSON; carries catalog licenses into PROVENANCE."
     )
+    emit.add_argument("--plugin-name", help="Plugin name, kebab-case (marketplace surface).")
     emit.add_argument(
         "--marketplace-name", help="Marketplace name, kebab-case (marketplace surface)."
     )

@@ -9,6 +9,7 @@ import zipfile
 from pathlib import Path
 
 from skillmeld.emit.package import (
+    default_plugin_name,
     emit_api_payload,
     emit_blockers,
     emit_claude_code,
@@ -23,7 +24,7 @@ from skillmeld.merge.group import default_grouping
 from skillmeld.merge.parse import parse_skill
 from skillmeld.merge.partition import partition
 from skillmeld.merge.prune import prune_and_close
-from skillmeld.merge.synthesize import assemble
+from skillmeld.merge.synthesize import assemble, slug
 from skillmeld.models import LicenseInfo, MergeResult, SkillDoc, SkillSource, UseCaseProfile
 
 SKILL_A = SkillDoc(
@@ -371,5 +372,61 @@ def test_emit_marketplace_is_deterministic(tmp_path: Path) -> None:
 
 def test_marketplace_name_blocker_refuses_reserved_names() -> None:
     assert marketplace_name_blocker("claude-community") is not None
+
+
+def test_default_plugin_name_joins_children_when_orchestrated() -> None:
+    result, _ = _merge()
+    assert result.orchestrator is not None  # the fixture is a multi-skill set
+    assert len(result.skills) >= 2
+    expected = "-".join(
+        slug(str(s.doc.frontmatter.get("name", s.doc.source.name))) for s in result.skills
+    )
+    name = default_plugin_name(result)
+    assert name == expected
+    assert name != "orchestrator"
+
+
+def test_default_plugin_name_uses_the_sole_skill_when_single() -> None:
+    from skillmeld.models import AssembledSkill
+
+    child = AssembledSkill(
+        doc=SkillDoc(
+            source=SkillSource(name="retriever"),
+            frontmatter={"name": "retriever", "description": "d"},
+            body="# R\n",
+        )
+    )
+    result = MergeResult(skills=[child])
+    assert result.orchestrator is None
+    assert default_plugin_name(result) == "retriever"
+
+
+def test_emit_marketplace_defaults_plugin_name_to_children(tmp_path: Path) -> None:
+    result, sources = _merge()
+    emit_marketplace(
+        result,
+        tmp_path,
+        sources=sources,
+        generated_at=WHEN,
+        marketplace_name="my-skills",
+        owner={"name": "me"},
+    )
+    entry = _read_manifest(tmp_path)["plugins"][0]
+    assert entry["name"] == default_plugin_name(result)
+    assert entry["name"] != "orchestrator"
+
+
+def test_emit_marketplace_honors_explicit_plugin_name(tmp_path: Path) -> None:
+    result, sources = _merge()
+    emit_marketplace(
+        result,
+        tmp_path,
+        sources=sources,
+        generated_at=WHEN,
+        marketplace_name="my-skills",
+        owner={"name": "me"},
+        plugin_name="my-plugin",
+    )
+    assert _read_manifest(tmp_path)["plugins"][0]["name"] == "my-plugin"
     assert marketplace_name_blocker("agent-skills") is not None
     assert marketplace_name_blocker("my-cool-skills") is None

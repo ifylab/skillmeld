@@ -268,6 +268,91 @@ def test_emit_marketplace_refuses_a_reserved_name(
     assert "reserved" in payload["error"]
 
 
+def _marketplace_multi_inputs(tmp_path: Path) -> tuple[list[str], Path]:
+    from skillmeld.models import AssembledSkill, MergeResult, SkillDoc, SkillSource
+
+    bundles: list[str] = []
+    children: list[AssembledSkill] = []
+    for name in ("retriever", "reviewer"):
+        bundle = tmp_path / name
+        bundle.mkdir()
+        (bundle / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: d\n---\n# {name}\n\nDo.\n"
+        )
+        bundles.append(str(bundle))
+        children.append(
+            AssembledSkill(
+                doc=SkillDoc(
+                    source=SkillSource(name=name),
+                    frontmatter={"name": name, "description": f"{name} things."},
+                    body=f"# {name}\n\nDo.\n",
+                )
+            )
+        )
+    orch = AssembledSkill(
+        doc=SkillDoc(
+            source=SkillSource(name="orchestrator"),
+            frontmatter={"name": "orchestrator", "description": "Route requests."},
+            body="# Orchestrator\n\nRoute.\n",
+        )
+    )
+    result_path = tmp_path / "result.json"
+    result_path.write_text(MergeResult(skills=children, orchestrator=orch).model_dump_json())
+    return bundles, result_path
+
+
+def test_emit_marketplace_plugin_name_override(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bundle, result_path = _marketplace_inputs(tmp_path)
+    out = tmp_path / "mp"
+    code = main(
+        [
+            "emit",
+            "marketplace",
+            "--result",
+            str(result_path),
+            "--bundles",
+            str(bundle),
+            "--out",
+            str(out),
+            "--plugin-name",
+            "My Plugin",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert any("plugin name normalized to 'my-plugin'" in w for w in payload["warnings"])
+    manifest = json.loads((out / ".claude-plugin" / "marketplace.json").read_text())
+    assert manifest["plugins"][0]["name"] == "my-plugin"
+
+
+def test_emit_marketplace_defaults_plugin_name_from_children_and_warns(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bundles, result_path = _marketplace_multi_inputs(tmp_path)
+    out = tmp_path / "mp"
+    code = main(
+        [
+            "emit",
+            "marketplace",
+            "--result",
+            str(result_path),
+            "--bundles",
+            *bundles,
+            "--out",
+            str(out),
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert any("plugin name defaulted" in w and "composed skills" in w for w in payload["warnings"])
+    manifest = json.loads((out / ".claude-plugin" / "marketplace.json").read_text())
+    name = manifest["plugins"][0]["name"]
+    assert name == "retriever-reviewer"
+    assert name != "orchestrator"
+
+
 def test_eval_sources_aligns_identity_for_a_nameless_source(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

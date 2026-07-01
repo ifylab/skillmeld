@@ -116,6 +116,22 @@ def marketplace_name_blocker(name: str) -> str | None:
     return None
 
 
+def default_plugin_name(result: MergeResult) -> str:
+    """A meaningful default name for the marketplace plugin entry.
+
+    With an orchestrator present the primary skill's name is the generic ``orchestrator`` routing
+    label, which makes a poor plugin name; name the plugin after the composed child skills instead
+    (their slugs joined). A single-skill set keeps that skill's own name.
+    """
+    if result.orchestrator is not None and result.skills:
+        return "-".join(
+            slug(str(skill.doc.frontmatter.get("name", skill.doc.source.name)))
+            for skill in result.skills
+        )
+    primary = _emitted_skills(result)[0]
+    return slug(str(primary.doc.frontmatter.get("name", primary.doc.source.name)))
+
+
 def plan_support_carry(
     result: MergeResult, sources: list[SkillDoc], bundle_dirs: list[str]
 ) -> dict[str, list[tuple[str, Path]]]:
@@ -271,7 +287,7 @@ def _marketplace_manifest(
     SHA drives updates once the user hosts the marketplace.
     """
     primary = _emitted_skills(result)[0]
-    name = plugin_name or slug(str(primary.doc.frontmatter.get("name", primary.doc.source.name)))
+    name = plugin_name or default_plugin_name(result)
     entry: dict[str, object] = {
         "name": name,
         "source": "./",

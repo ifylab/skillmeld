@@ -11,6 +11,8 @@ All notable changes to skillmeld are recorded here. The format follows
 - A `marketplace` emit surface that packages the merged set as a `strict:false` Claude Code plugin
   marketplace (`.claude-plugin/marketplace.json` plus the skills tree and `PROVENANCE.md`), ready to
   host and install with `/plugin marketplace add`.
+- `emit marketplace --plugin-name` to set the plugin entry's name. Without it, a multi-skill set now
+  defaults to the composed skills' names joined, instead of the generic `orchestrator` slug.
 
 ### Fixed
 
