@@ -14,6 +14,11 @@ All notable changes to skillmeld are recorded here. The format follows
 - `emit marketplace --plugin-name` to set the plugin entry's name. Without it, a multi-skill set now
   defaults to the composed skills' names joined, instead of the generic `orchestrator` slug.
 
+### Changed
+
+- README places skillmeld among the newer composition tools (AgentSkillOS, SkillComposer) and
+  links the Agent Skills spec home ([agentskills.io](https://agentskills.io)).
+
 ### Fixed
 
 - `eval` now accepts `--sources` (parity with `merge` and `emit`), so a source whose `SKILL.md`

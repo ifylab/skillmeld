@@ -9,11 +9,13 @@
 
 Describe what you want to do, point skillmeld at your repo, and it finds existing community skills for the job, security-scans them, and merges the best two or three into one coherent skill set tailored to your project — instead of writing one from scratch.
 
-It runs on your own Claude in Claude Code, grounds in your repo, and shows you what it pulled, what it found, and why before anything is installed. It builds on the existing skills ecosystem (the open standard, community marketplaces, and registries) rather than replacing it.
+It runs on your own Claude in Claude Code, grounds in your repo, and shows you what it pulled, what it found, and why before anything is installed. It builds on the existing skills ecosystem (the [open standard](https://agentskills.io), community marketplaces, and registries) rather than replacing it.
 
 ## What makes it different
 
 skillmeld composes; it does not generate. Every line in a merged skill traces byte-for-byte back to a source skill — a deterministic verifier enforces this, so the tool can never invent an instruction. The hard, mechanical work (parsing, security scanning, deduplicating, conflict detection, packaging) runs as deterministic Python that makes zero model calls. Your Claude supplies the judgment; the engine supplies the guarantees.
+
+Composition tools are appearing on other layers too: [AgentSkillOS](https://github.com/ynulihao/AgentSkillOS) retrieves skills from a large pool and chains them into runtime workflows, and [SkillComposer](https://arxiv.org/abs/2606.06079) has a model generate and evolve its own skills. skillmeld's job is different: it merges skills other people wrote — untrusted input — into one reviewed, deduplicated set before anything runs, with a security verdict on every source and a byte trace on every line.
 
 ## How it works
 
@@ -66,7 +68,7 @@ uv run skillmeld merge --bundles a/ b/ --profile profile.json
 
 ## Acknowledgements
 
-skillmeld stands on the open Agent Skills ecosystem — the skill format, the community marketplaces, and the registries that publish and share skills. It composes that work; it does not replace it. Security scanning leans on [bandit](https://github.com/PyCQA/bandit), with optional [semgrep](https://semgrep.dev/) and [gitleaks](https://github.com/gitleaks/gitleaks) when present.
+skillmeld stands on the open [Agent Skills](https://agentskills.io) ecosystem — the skill format, the community marketplaces, and the registries that publish and share skills. It composes that work; it does not replace it. Security scanning leans on [bandit](https://github.com/PyCQA/bandit), with optional [semgrep](https://semgrep.dev/) and [gitleaks](https://github.com/gitleaks/gitleaks) when present.
 
 ## Status
 

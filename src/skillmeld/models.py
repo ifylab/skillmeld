@@ -13,7 +13,8 @@ from pydantic import BaseModel, Field
 #   - Claude Code skill listing: `description` + `when_to_use` combined, truncated past 1536
 #     (`maxSkillDescriptionChars`, default since Claude Code v2.1.105).
 # skillmeld emits no `when_to_use`, so the description alone is what gets budgeted on each surface.
-# These track an evolving spec; re-verify against the Claude docs before relying on them.
+# These track an evolving spec; re-verify before relying on them: the format spec lives at
+# https://agentskills.io/specification, the Claude Code surface at https://code.claude.com/docs/en/skills.
 API_DESCRIPTION_LIMIT = 1024
 CLAUDE_CODE_ROUTING_LIMIT = 1536
 
