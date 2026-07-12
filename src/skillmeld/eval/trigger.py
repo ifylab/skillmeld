@@ -22,6 +22,7 @@ class TriggerQuery(BaseModel):
     text: str
     kind: Literal["trigger", "near-miss"]
     expected_skill: str | None = None
+    origin: Literal["host", "source"] = "host"
 
 
 class TriggerJudgment(BaseModel):
@@ -42,13 +43,19 @@ class TriggerScore(BaseModel):
 def split(
     queries: list[TriggerQuery], held_out_fraction: float = HELD_OUT_FRACTION
 ) -> tuple[list[str], list[str]]:
-    """Deterministic train/held-out split by sorted id; every Nth query is held out."""
-    ordered = sorted(q.id for q in queries)
-    if not ordered:
+    """Deterministic train/held-out split by sorted id; every Nth host query is held out.
+
+    Queries ingested from a source skill's bundled evals (``origin="source"``) never enter the
+    held-out pool: their text typically quotes the skill they came from, so holding them out
+    would contaminate the leakage gate and the improve selection. They always train.
+    """
+    host = sorted(q.id for q in queries if q.origin == "host")
+    ingested = {q.id for q in queries if q.origin != "host"}
+    if not host and not ingested:
         return [], []
     stride = max(2, round(1 / held_out_fraction)) if held_out_fraction > 0 else 0
-    held_out = [qid for index, qid in enumerate(ordered) if stride and index % stride == 0]
-    train = [qid for qid in ordered if qid not in set(held_out)]
+    held_out = [qid for index, qid in enumerate(host) if stride and index % stride == 0]
+    train = sorted(({*host} | ingested) - set(held_out))
     return train, held_out
 
 

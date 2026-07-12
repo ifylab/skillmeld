@@ -13,6 +13,10 @@ All notable changes to skillmeld are recorded here. The format follows
   host and install with `/plugin marketplace add`.
 - `emit marketplace --plugin-name` to set the plugin entry's name. Without it, a multi-skill set now
   defaults to the composed skills' names joined, instead of the generic `orchestrator` slug.
+- `eval` speaks the skill-creator interchange formats: `eval run --write-evals` exports the query
+  set as a portable `evals.json`, `eval improve --history` keeps a `history.json` improvement
+  ledger, and `--ingest-source-evals` reads a source skill's bundled evals as extra train-side
+  trigger queries (never held out, so the leakage gate and the improve selection stay clean).
 
 ### Changed
 

@@ -419,3 +419,108 @@ def test_eval_sources_aligns_identity_for_a_nameless_source(
     with_src = json.loads(capsys.readouterr().out)
     assert code == 0
     assert with_src.get("verifier_problems") == []
+
+
+def test_eval_interchange_ingests_writes_evals_and_history(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A bundle ships its own evals: --ingest-source-evals folds them in as train-side queries,
+    # --write-evals exports the interchange evals.json, and improve --history keeps the ledger.
+    bundle = tmp_path / "retriever"
+    bundle.mkdir()
+    (bundle / "SKILL.md").write_text(
+        "---\nname: retriever\n---\n# Retriever\n\n"
+        "- Always validate the query first.\n"
+        "- Retrieve matching documents for the request.\n"
+    )
+    evals_dir = bundle / "evals"
+    evals_dir.mkdir()
+    (evals_dir / "evals.json").write_text(
+        json.dumps(
+            {
+                "skill_name": "retriever",
+                "evals": [{"id": 1, "prompt": "fetch the matching documents"}],
+            }
+        )
+    )
+    profile = tmp_path / "profile.json"
+    profile.write_text(
+        UseCaseProfile(
+            summary="Retrieve documents.", tasks=["retrieve documents"]
+        ).model_dump_json()
+    )
+    code = main(["merge", "--bundles", str(bundle), "--profile", str(profile)])
+    assert code == 0
+    result_path = tmp_path / "result.json"
+    result_path.write_text(capsys.readouterr().out)
+
+    queries = tmp_path / "queries.json"
+    queries.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "q1",
+                    "text": "retrieve documents",
+                    "kind": "trigger",
+                    "expected_skill": "retriever",
+                }
+            ]
+        )
+    )
+    evals_out = tmp_path / "out" / "evals.json"
+    code = main(
+        [
+            "eval",
+            "run",
+            "--result",
+            str(result_path),
+            "--bundles",
+            str(bundle),
+            "--queries",
+            str(queries),
+            "--ingest-source-evals",
+            "--write-evals",
+            str(evals_out),
+        ]
+    )
+    report = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert report["ingested_query_ids"] == ["src-retriever-1"]
+    exported = json.loads(evals_out.read_text())
+    assert {case["prompt"] for case in exported["evals"]} == {
+        "retrieve documents",
+        "fetch the matching documents",
+    }
+
+    judgments = tmp_path / "judgments.json"
+    judgments.write_text(json.dumps([{"query_id": "q1", "routed_skill": "retriever"}]))
+    history = tmp_path / "history.json"
+    code = main(
+        [
+            "eval",
+            "improve",
+            "--result",
+            str(result_path),
+            "--bundles",
+            str(bundle),
+            "--queries",
+            str(queries),
+            "--skill",
+            "0",
+            "--description",
+            "Retrieve matching documents for a request.",
+            "--baseline-judgments",
+            str(judgments),
+            "--candidate-judgments",
+            str(judgments),
+            "--history",
+            str(history),
+            "--generated-at",
+            "2026-07-10T00:00:00+00:00",
+        ]
+    )
+    assert code == 0
+    capsys.readouterr()
+    ledger = json.loads(history.read_text())
+    assert ledger["started_at"] == "2026-07-10T00:00:00+00:00"
+    assert [entry["version"] for entry in ledger["iterations"]] == ["v0", "v1"]

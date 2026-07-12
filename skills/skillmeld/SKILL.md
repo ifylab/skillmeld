@@ -89,6 +89,12 @@ Each command prints JSON to stdout. This skill reads that JSON and supplies the 
    (the same JSON you gave merge) so the verifier resolves each source's catalog identity — without
    it, a source whose `SKILL.md` omits `name:` fails the byte-trace check. Then `run.sh eval run`
    must report `passed: true` over the set.
+   Optional interchange: `eval improve --history <path>` keeps a portable `history.json` ledger of
+   the accepted and rejected edits, and `eval run --write-evals <path>` exports the query set as a
+   portable `evals.json` (both skill-creator formats). When a fetched source bundles its own evals
+   (`evals/evals.json`), `--ingest-source-evals` folds them in as extra train-side trigger queries
+   targeting that skill — they never enter the held-out split, so the leakage gate and the improve
+   selection stay on your own queries.
    With the set now complete, show the user the plan and the authored descriptions as one
    consolidated review before writing anything.
 9. Emit — `run.sh emit <surface>` packages the result; install only after the user approves. Emit
@@ -166,6 +172,13 @@ The JSON shapes you author by hand, so you do not have to read the engine source
   descriptions as a cross-check: `eval run` adds an `independent_trigger` score and any
   `routing_disagreements`, and `eval improve` rejects an edit whose independent held-out routing
   regresses even when your reported routing held.
+- **Eval interchange** (`--ingest-source-evals`, `--write-evals`, `--history`): skillmeld speaks
+  the skill-creator schemas. `evals.json` is
+  `{"skill_name": ..., "evals": [{"id", "prompt", "expected_output", "files", "expectations"}]}`
+  (the docs' `query`/`expected_behavior` shape is accepted on ingest); `history.json` is the
+  improve ledger — a `v0` baseline, then one iteration per `eval improve` graded `won`/`lost`,
+  with `current_best` tracking the accepted chain. Ingested queries are listed as
+  `ingested_query_ids` in the `eval run` report and always land train-side.
 - **Carrying source identity (`--sources`)**: `merge`, `emit`, and `eval` all accept
   `--sources <discover.json>` to re-attach what discovery knew about each source (matched by bundle
   hash): its license and its catalog name. Pass it so the plan and `PROVENANCE.md` show the real

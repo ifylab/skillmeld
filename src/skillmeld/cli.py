@@ -294,6 +294,16 @@ def _load_sources(bundles: list[str]) -> list[SkillDoc]:
     return [load_bundle(Path(bundle)) for bundle in bundles]
 
 
+def _set_name(result: MergeResult) -> str:
+    """The composed set's interchange name: the orchestrator's, else the first named child's."""
+    skills = [result.orchestrator, *result.skills] if result.orchestrator else list(result.skills)
+    for skill in skills:
+        name = str(skill.doc.frontmatter.get("name") or "")
+        if name:
+            return name
+    return "composed-set"
+
+
 def _cmd_eval(args: argparse.Namespace) -> int:
     from skillmeld.eval.evaluate import apply_description_edit, evaluate
     from skillmeld.eval.trigger import TriggerJudgment, TriggerQuery
@@ -316,6 +326,27 @@ def _cmd_eval(args: argparse.Namespace) -> int:
     if getattr(args, "queries", None):
         queries = [TriggerQuery.model_validate(q) for q in json.loads(_read_text(args.queries))]
 
+    # Ingested queries are marked origin="source", which pins them to the train side of the
+    # split — a bundled eval typically quotes its own skill, so it must never be a held-out metric.
+    if getattr(args, "ingest_source_evals", False):
+        from skillmeld.eval.interchange import (
+            InterchangeError,
+            load_source_evals,
+            queries_from_cases,
+        )
+
+        child_names = {str(skill.doc.frontmatter.get("name") or "") for skill in result.skills}
+        ingested: list[TriggerQuery] = []
+        try:
+            for bundle, doc in zip(args.bundles, sources, strict=True):
+                if doc.source.name not in child_names:
+                    continue
+                cases = load_source_evals(Path(bundle))
+                ingested.extend(queries_from_cases(cases, doc.source.name))
+        except InterchangeError as exc:
+            return _error(str(exc))
+        queries = [*(queries or []), *ingested]
+
     if args.action == "run":
         judgments = None
         if getattr(args, "judgments", None):
@@ -323,6 +354,15 @@ def _cmd_eval(args: argparse.Namespace) -> int:
                 TriggerJudgment.model_validate(j) for j in json.loads(_read_text(args.judgments))
             ]
         report = evaluate(result, sources, queries=queries, judgments=judgments)
+        if getattr(args, "write_evals", None):
+            from skillmeld.eval.interchange import InterchangeError, dump_evals
+
+            if not queries:
+                return _error("--write-evals needs --queries or ingested source evals")
+            try:
+                dump_evals(queries, _set_name(result), Path(args.write_evals))
+            except InterchangeError as exc:
+                return _error(str(exc))
         return _emit(report.model_dump())
 
     if queries is None:
@@ -342,6 +382,27 @@ def _cmd_eval(args: argparse.Namespace) -> int:
         baseline_judgments=baseline,
         candidate_judgments=candidate,
     )
+    if getattr(args, "history", None):
+        from datetime import UTC, datetime
+
+        from skillmeld.eval.interchange import (
+            InterchangeError,
+            append_history,
+            dump_history,
+            load_history,
+        )
+
+        started_at = args.generated_at or datetime.now(UTC).isoformat(timespec="seconds")
+        try:
+            ledger = append_history(
+                load_history(Path(args.history)),
+                skill_name=_set_name(result),
+                decision=decision,
+                started_at=started_at,
+            )
+            dump_history(ledger, Path(args.history))
+        except InterchangeError as exc:
+            return _error(str(exc))
     return _emit({"decision": decision.model_dump(), "result": edited.model_dump()})
 
 
@@ -596,6 +657,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--sources",
         help="discover/select JSON; align source identity to the catalog (as merge/emit).",
     )
+    evaluate.add_argument(
+        "--ingest-source-evals",
+        action="store_true",
+        help="Read each bundle's evals/evals.json as extra train-side trigger queries.",
+    )
+    evaluate.add_argument(
+        "--write-evals",
+        help="Write the query set as a skill-creator evals.json to this path (run).",
+    )
+    evaluate.add_argument(
+        "--history",
+        help="history.json improvement ledger to append this improve outcome to.",
+    )
+    evaluate.add_argument("--generated-at", help="Override the ledger timestamp (for tests).")
 
     emit = sub.add_parser("emit", help="Package the merged set for a surface.")
     emit.add_argument("surface", choices=["claude-code", "claudeai", "api", "marketplace"])

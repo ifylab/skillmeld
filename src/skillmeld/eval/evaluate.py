@@ -27,6 +27,7 @@ class EvalReport(BaseModel):
     routing_disagreements: list[str] = Field(default_factory=list)
     leakage: list[str] = Field(default_factory=list)
     verifier_problems: list[str] = Field(default_factory=list)
+    ingested_query_ids: list[str] = Field(default_factory=list)
     passed: bool = True
 
 
@@ -53,6 +54,7 @@ def evaluate(
     independent: TriggerScore | None = None
     disagreements: list[str] = []
     leaks: list[str] = []
+    ingested: list[str] = []
     if queries:
         trigger = score_trigger(queries, judgments or [])
         engine_judgments = route_queries(result, queries)
@@ -60,6 +62,7 @@ def evaluate(
         if judgments:
             disagreements = _disagreements(judgments, engine_judgments)
         leaks = held_out_leaks(result, queries, trigger.held_out_ids)
+        ingested = sorted(q.id for q in queries if q.origin != "host")
     passed = all(report.passed for report in quality) and not problems and not leaks
     return EvalReport(
         quality=quality,
@@ -68,6 +71,7 @@ def evaluate(
         routing_disagreements=disagreements,
         leakage=leaks,
         verifier_problems=problems,
+        ingested_query_ids=ingested,
         passed=passed,
     )
 
