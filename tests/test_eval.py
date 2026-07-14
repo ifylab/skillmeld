@@ -8,7 +8,7 @@ import pytest
 from skillmeld.eval.evaluate import apply_description_edit, evaluate
 from skillmeld.eval.leakage import held_out_leaks
 from skillmeld.eval.quality import score_quality
-from skillmeld.eval.route import route_queries
+from skillmeld.eval.route import _idf, route_queries
 from skillmeld.eval.strategy import STRATEGIES, TaskPassRateStrategy
 from skillmeld.eval.trigger import TriggerJudgment, TriggerQuery, score_trigger, split
 from skillmeld.merge.dedupe import collapse
@@ -409,3 +409,51 @@ def test_description_edit_accepted_when_independent_routing_holds() -> None:
     assert decision.before_independent == 1.0
     assert decision.after_independent == 1.0
     assert "rank" in str(edited.skills[0].doc.frontmatter["description"])
+
+
+# --- routing precision: generic-code and universal tokens --------------------------------
+
+
+def _code_flavored_result() -> tuple[MergeResult, str]:
+    result, _ = _merge()
+    a = str(result.skills[0].doc.frontmatter["name"])
+    result.skills[0].doc.frontmatter["description"] = (
+        "Write Python scripts for Grasshopper component pipelines."
+    )
+    result.skills[1].doc.frontmatter["description"] = "Review generated code for quality."
+    return result, a
+
+
+def test_route_queries_ignores_generic_code_tokens_on_a_near_miss() -> None:
+    # The near-miss shares only generic programming vocabulary with one child. On those tokens
+    # alone ("write", "python") the router used to latch onto the Python-flavored child; with no
+    # distinctive term left the query must route nowhere.
+    result, _ = _code_flavored_result()
+    query = TriggerQuery(id="q1", text="write a python flask database query", kind="near-miss")
+    assert route_queries(result, [query])[0].routed_skill is None
+
+
+def test_route_queries_still_routes_on_a_domain_token() -> None:
+    # The stoplist must not blunt real triggers: "grasshopper" is the discriminating term here.
+    result, a = _code_flavored_result()
+    query = TriggerQuery(id="q1", text="write python for grasshopper", kind="trigger")
+    assert route_queries(result, [query])[0].routed_skill == a
+
+
+def test_idf_gives_zero_weight_to_a_token_every_child_shares() -> None:
+    surfaces = [("a", {"skills", "compose"}), ("b", {"skills", "audit"})]
+    queries = [TriggerQuery(id="q1", text="compose skills", kind="trigger")]
+    idf = _idf(surfaces, queries)
+    assert idf["skills"] == 0.0
+    assert idf["compose"] > 0.0
+
+
+def test_route_queries_routes_a_single_child_on_a_genuine_match() -> None:
+    # With one child every present token is trivially shared by "every" child; the universal-token
+    # rule is scoped to multiple children so a genuine match still routes.
+    result, _ = _merge()
+    result.skills.pop()
+    a = str(result.skills[0].doc.frontmatter["name"])
+    result.skills[0].doc.frontmatter["description"] = "Retrieve documents from the corpus."
+    query = TriggerQuery(id="q1", text="retrieve corpus documents", kind="trigger")
+    assert route_queries(result, [query])[0].routed_skill == a

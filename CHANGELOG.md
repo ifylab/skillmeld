@@ -27,6 +27,9 @@ All notable changes to skillmeld are recorded here. The format follows
 
 - `eval` now accepts `--sources` (parity with `merge` and `emit`), so a source whose `SKILL.md`
   omits `name:` is verified under its catalog identity instead of failing the byte-trace check.
+- The independent routing cross-check no longer routes near-miss queries on generic programming
+  vocabulary alone ("write", "python", "code", ...), and a token shared by every child carries no
+  routing weight — `independent_trigger` and `routing_disagreements` stay high-precision.
 
 ## [0.1.0] - 2026-06-13
 
