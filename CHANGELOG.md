@@ -8,6 +8,14 @@ All notable changes to skillmeld are recorded here. The format follows
 
 ### Added
 
+- The hosted data layer is live: `catalog sync` now works out of the box against
+  `data.ifylab.dev/skillmeld` — an Ed25519-signed manifest verified against an embedded public
+  key, a hash-pinned catalog, and an advisory verdict index in which every published skill is
+  pre-scanned (known-BLOCK bundles are dropped at discovery before anyone sees them). Rebuilt
+  weekly by CI.
+- `build-catalog` builds and signs the production artifacts (crawl, fetch-verify, scan, sign)
+  with the signing key from `SKILLMELD_SIGNING_KEY`, and `catalog sync --base-url` points the
+  client at an alternate hosted endpoint.
 - A `marketplace` emit surface that packages the merged set as a `strict:false` Claude Code plugin
   marketplace (`.claude-plugin/marketplace.json` plus the skills tree and `PROVENANCE.md`), ready to
   host and install with `/plugin marketplace add`.
@@ -20,6 +28,9 @@ All notable changes to skillmeld are recorded here. The format follows
 
 ### Changed
 
+- The catalog crawl resolves every source repo to its commit SHA at build time, so a published
+  catalog's fetch URLs and pinned hashes stay consistent no matter what the branch does
+  afterwards.
 - README places skillmeld among the newer composition tools (AgentSkillOS, SkillComposer) and
   links the Agent Skills spec home ([agentskills.io](https://agentskills.io)).
 

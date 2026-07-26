@@ -1,0 +1,47 @@
+name: catalog
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 5 * * 1"
+
+concurrency:
+  group: catalog
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync
+      - name: Build and sign the catalog
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SKILLMELD_SIGNING_KEY: ${{ secrets.SKILLMELD_SIGNING_KEY }}
+        run: uv run skillmeld build-catalog --out dist/catalog | tee build-summary.json
+      - name: Upload to R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        # Blobs are content-addressed and go up first with immutable caching; the short-TTL
+        # signed manifest pair cuts over last (sig before json, so a paired read either
+        # matches or fails verification closed).
+        run: |
+          for blob in dist/catalog/blobs/*; do
+            npx --yes wrangler@4 r2 object put "ifylab-data/skillmeld/blobs/$(basename "$blob")" \
+              --file "$blob" --content-type application/json \
+              --cache-control "public, max-age=31536000, immutable" --remote
+          done
+          npx --yes wrangler@4 r2 object put ifylab-data/skillmeld/manifest.sig \
+            --file dist/catalog/manifest.sig --content-type application/octet-stream \
+            --cache-control "public, max-age=300" --remote
+          npx --yes wrangler@4 r2 object put ifylab-data/skillmeld/manifest.json \
+            --file dist/catalog/manifest.json --content-type application/json \
+            --cache-control "public, max-age=300" --remote

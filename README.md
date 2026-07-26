@@ -26,7 +26,7 @@ intake -> ground -> discover -> select (<=3) -> security gate -> merge -> eval -
 ```
 
 - **ground** scans your repo into a use-case profile, locally.
-- **discover** prefilters a signed catalog of community skills and your Claude ranks the shortlist.
+- **discover** syncs a signed catalog of community skills (Ed25519-verified, hash-pinned, cached locally) and your Claude ranks the shortlist.
 - **security gate** scans every candidate (PASS / REVIEW / BLOCK) before you see it, and again after merge.
 - **merge** parses each skill into byte-exact atoms, deduplicates, resolves conflicts, prunes to your use case, and partitions the result into at most three skills behind a thin routing orchestrator. A verifier proves every output atom traces to a source.
 - **emit** packages the result for Claude Code, a claude.ai zip, the API, or a Claude Code plugin marketplace, with a `PROVENANCE.md` recording where every part came from.
@@ -72,7 +72,7 @@ skillmeld stands on the open [Agent Skills](https://agentskills.io) ecosystem â€
 
 ## Status
 
-In active development, built in the open one piece at a time. The discovery, security, merge, evaluation, and packaging stages are implemented and tested; the hosted catalog and the curated AEC corpus are coming next. See the [changelog](CHANGELOG.md).
+In active development, built in the open one piece at a time. The discovery, security, merge, evaluation, and packaging stages are implemented and tested, and discovery runs against a hosted signed catalog rebuilt weekly by CI â€” every published skill is crawled at a pinned commit and pre-scanned into an advisory verdict index. The curated AEC corpus is coming next. See the [changelog](CHANGELOG.md).
 
 ## Stack
 

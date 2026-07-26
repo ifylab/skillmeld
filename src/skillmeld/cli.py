@@ -107,7 +107,7 @@ def _cmd_ground(repo: str) -> int:
     return _emit({"profile": profile.model_dump(), "evidence": evidence.model_dump()})
 
 
-def _cmd_catalog(action: str) -> int:
+def _cmd_catalog(action: str, base_url: str | None = None) -> int:
     from skillmeld.registries import catalog_client as cat
 
     cache = cat.cache_root()
@@ -125,7 +125,10 @@ def _cmd_catalog(action: str) -> int:
             }
         )
     try:
-        manifest = cat.load_snapshot(cache) if action == "verify" else cat.sync()
+        if action == "verify":
+            manifest = cat.load_snapshot(cache)
+        else:
+            manifest = cat.sync(base_url if base_url else cat.DEFAULT_BASE_URL)
     except (cat.CatalogError, OSError) as exc:
         return _error(str(exc))
     return _emit(
@@ -430,6 +433,46 @@ def _cmd_dev_catalog(args: argparse.Namespace) -> int:
     )
 
 
+def _cmd_build_catalog(args: argparse.Namespace) -> int:
+    from datetime import UTC, datetime
+
+    import httpx
+
+    from skillmeld.hosted.build_catalog import build_production_catalog, signing_key_from_env
+    from skillmeld.hosted.sources import PRODUCTION_REPOS
+    from skillmeld.registries.catalog_client import DEFAULT_BASE_URL
+    from skillmeld.registries.fetch import FetchError
+
+    try:
+        private = signing_key_from_env()
+    except ValueError as exc:
+        return _error(str(exc))
+    generated_at = args.generated_at or datetime.now(UTC).isoformat(timespec="seconds")
+    try:
+        manifest, document, verdicts = build_production_catalog(
+            args.repos or PRODUCTION_REPOS,
+            Path(args.out),
+            private_key=private,
+            generated_at=generated_at,
+            base_url=args.base_url or DEFAULT_BASE_URL,
+        )
+    except (OSError, httpx.HTTPError, FetchError) as exc:
+        return _error(f"catalog build failed: {exc}")
+    counts: dict[str, int] = {}
+    for record in verdicts.records:
+        counts[record.verdict.value] = counts.get(record.verdict.value, 0) + 1
+    return _emit(
+        {
+            "out": str(args.out),
+            "generated_at": manifest.generated_at,
+            "key_id": manifest.key_id,
+            "artifacts": [artifact.name for artifact in manifest.artifacts],
+            "entries": len(document.entries),
+            "verdicts": counts,
+        }
+    )
+
+
 def _cmd_emit(args: argparse.Namespace) -> int:
     from datetime import UTC, datetime
 
@@ -584,6 +627,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     catalog = sub.add_parser("catalog", help="Fetch and verify the hosted data layer.")
     catalog.add_argument("action", choices=["sync", "verify", "status"])
+    catalog.add_argument(
+        "--base-url", help="Hosted layer base URL (default: the production URL; sync only)."
+    )
 
     intake = sub.add_parser("intake", help="Normalize a use case and flag if it is too thin.")
     intake.add_argument("use_case")
@@ -597,6 +643,20 @@ def build_parser() -> argparse.ArgumentParser:
     dev_catalog.add_argument("--repos", nargs="+", required=True, help="owner/name repos to crawl.")
     dev_catalog.add_argument("--out", required=True, help="Output cache directory.")
     dev_catalog.add_argument("--generated-at", help="Override the catalog timestamp (for tests).")
+
+    build_catalog = sub.add_parser(
+        "build-catalog",
+        help="Build and sign the production catalog + verdict index "
+        "(key from SKILLMELD_SIGNING_KEY).",
+    )
+    build_catalog.add_argument("--out", required=True, help="Output cache directory.")
+    build_catalog.add_argument(
+        "--repos", nargs="+", help="owner/name repos to crawl (default: the curated source list)."
+    )
+    build_catalog.add_argument(
+        "--base-url", help="Base URL written into artifact links (default: the production URL)."
+    )
+    build_catalog.add_argument("--generated-at", help="Override the catalog timestamp (for tests).")
 
     discover_parser = sub.add_parser("discover", help="Find candidate skills for the profile.")
     discover_parser.add_argument(
@@ -703,9 +763,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if command == "ground":
         return _cmd_ground(args.repo)
     if command == "catalog":
-        return _cmd_catalog(args.action)
+        return _cmd_catalog(args.action, args.base_url)
     if command == "dev-catalog":
         return _cmd_dev_catalog(args)
+    if command == "build-catalog":
+        return _cmd_build_catalog(args)
     if command == "discover":
         return _cmd_discover(args.profile, args.catalog, args.limit)
     if command == "select":

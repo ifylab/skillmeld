@@ -524,3 +524,21 @@ def test_eval_interchange_ingests_writes_evals_and_history(
     ledger = json.loads(history.read_text())
     assert ledger["started_at"] == "2026-07-10T00:00:00+00:00"
     assert [entry["version"] for entry in ledger["iterations"]] == ["v0", "v1"]
+
+
+def test_build_catalog_without_signing_key_errors(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("SKILLMELD_SIGNING_KEY", raising=False)
+    code = main(["build-catalog", "--out", str(tmp_path / "out")])
+    out = json.loads(capsys.readouterr().out)
+    assert code == 1
+    assert "SKILLMELD_SIGNING_KEY" in out["error"]
+
+
+def test_catalog_sync_accepts_a_base_url_override() -> None:
+    from skillmeld.cli import build_parser
+
+    args = build_parser().parse_args(["catalog", "sync", "--base-url", "https://x.test/skillmeld"])
+    assert args.base_url == "https://x.test/skillmeld"
+

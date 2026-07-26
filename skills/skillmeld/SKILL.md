@@ -36,9 +36,11 @@ Each command prints JSON to stdout. This skill reads that JSON and supplies the 
    Complete the profile yourself from the session: write `summary` (2-3 sentences) and
    `tasks` (3-6 representative tasks in the user's words), then save the completed profile
    JSON to a temp file.
-3. Discover — `run.sh discover --profile <profile.json>` prefilters the synced catalog and
-   prints scored candidates with per-match evidence (`matched`). Skills already blocked by
-   the verdict index are dropped before anyone sees them.
+3. Discover — `run.sh catalog sync` first refreshes the signed catalog (fast when fresh;
+   offline it falls back to the last verified sync), then `run.sh discover --profile
+   <profile.json>` prefilters it and prints scored candidates with per-match evidence
+   (`matched`). Skills already blocked by the verdict index are dropped before anyone sees
+   them.
 4. Rank + select — rank the candidates by fit to the use case. Read each candidate's name,
    description, tags, and `matched` evidence; ignore `files`. Answer with existing candidate
    ids only — never invent an id — best first, at most three. Then

@@ -40,7 +40,10 @@ def crawl(
     """Crawl ``owner/name`` repos for SKILL.md bundles. Returns catalog entries, sorted by id.
 
     ``ref=None`` resolves each repo's own default branch (community repos are not all on ``main``).
-    Pass an explicit ref to pin every repo to the same branch or SHA.
+    Pass an explicit ref to pin every repo to the same branch or SHA. Either way the crawl
+    resolves the ref to its commit SHA before reading, so every ``fetch_base`` and pinned hash
+    in the resulting entries refers to one immutable tree — a later push to the branch cannot
+    make a catalog entry's hashes unfetchable.
     """
     owns_client = client is None
     http = client if client is not None else httpx.Client(timeout=_TIMEOUT, headers=_headers())
@@ -56,7 +59,7 @@ def crawl(
 
 
 def _crawl_repo(http: httpx.Client, repo: str, ref: str | None) -> list[CatalogEntry]:
-    resolved = ref if ref is not None else _default_branch(http, repo)
+    resolved = _resolve_commit(http, repo, ref if ref is not None else _default_branch(http, repo))
     tree = _get_json(http, f"{_API}/repos/{repo}/git/trees/{resolved}?recursive=1")
     raw_nodes = tree.get("tree", [])
     blobs: set[str] = set()
@@ -94,6 +97,13 @@ def _default_branch(http: httpx.Client, repo: str) -> str:
     data = _get_json(http, f"{_API}/repos/{repo}")
     branch = data.get("default_branch")
     return branch if isinstance(branch, str) and branch else "main"
+
+
+def _resolve_commit(http: httpx.Client, repo: str, ref: str) -> str:
+    """Resolve a branch, tag, or SHA to the commit SHA it points at right now."""
+    data = _get_json(http, f"{_API}/repos/{repo}/commits/{ref}")
+    sha = data.get("sha")
+    return sha if isinstance(sha, str) and sha else ref
 
 
 def _build_entry(

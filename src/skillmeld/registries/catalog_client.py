@@ -22,11 +22,17 @@ from pydantic import ValidationError
 
 from skillmeld.models import Artifact, CatalogManifest
 
-# Custom-domain route on ifylab.dev (Cloudflare R2). Wired to the live bucket in W8.
-DEFAULT_BASE_URL = "https://ifylab.dev/skillmeld"
+# Cloudflare R2 bucket behind the data.ifylab.dev custom domain, refreshed by CI.
+DEFAULT_BASE_URL = "https://data.ifylab.dev/skillmeld"
 
-# Embedded Ed25519 public keys, by key id. The production key is added in W8.
-TRUSTED_KEYS: dict[str, bytes] = {}
+# Embedded Ed25519 public keys, by key id. Rotation: publish under a new id, ship a client
+# release carrying both, then retire the old id once no supported client trusts only it.
+PRODUCTION_KEY_ID = "ifylab-2026-1"
+TRUSTED_KEYS: dict[str, bytes] = {
+    PRODUCTION_KEY_ID: bytes.fromhex(
+        "72a5e8c0ac3d94c086603e39b9be42d8d6b0ca976ca98153e3b250f94f33aeca"
+    ),
+}
 
 # Dev-only trust hook: a local builder exports its public key here so a locally-signed catalog
 # verifies offline, with no production key. Never set this in a trusted/production environment.
