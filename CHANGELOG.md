@@ -4,7 +4,7 @@ All notable changes to skillmeld are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-07-26
 
 ### Added
 
@@ -62,5 +62,5 @@ grounding, discovery over a signed catalog, selection (at most three), a tri-sta
 security gate, the eight-step byte-traceable merge engine, evaluation, and packaging
 for Claude Code / claude.ai / the API with provenance.
 
-[Unreleased]: https://github.com/ifylab/skillmeld/compare/v0.1.0...HEAD
+[0.2.0]: https://github.com/ifylab/skillmeld/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ifylab/skillmeld/releases/tag/v0.1.0
