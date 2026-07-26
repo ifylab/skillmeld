@@ -542,3 +542,52 @@ def test_catalog_sync_accepts_a_base_url_override() -> None:
     args = build_parser().parse_args(["catalog", "sync", "--base-url", "https://x.test/skillmeld"])
     assert args.base_url == "https://x.test/skillmeld"
 
+
+def test_emit_api_carries_headers_scope_and_provenance(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bundle, result_path = _marketplace_inputs(tmp_path)
+    code = main(["emit", "api", "--result", str(result_path), "--bundles", str(bundle)])
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["beta_headers"] == [
+        "code-execution-2025-08-25",
+        "skills-2025-10-02",
+        "files-api-2025-04-14",
+    ]
+    assert payload["requires_confirmation"] is False
+    assert any("workspace-wide" in w for w in payload["warnings"])
+    assert "## Sharing scope" in payload["provenance_md"]
+
+
+def test_emit_api_flags_a_review_frontmatter_verdict(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from skillmeld.models import (
+        AssembledSkill,
+        MergePlan,
+        MergeResult,
+        SkillDoc,
+        SkillSource,
+        Verdict,
+    )
+
+    bundle = tmp_path / "retriever"
+    bundle.mkdir()
+    (bundle / "SKILL.md").write_text("---\nname: retriever\ndescription: d\n---\n# R\n\nDo.\n")
+    child = AssembledSkill(
+        doc=SkillDoc(
+            source=SkillSource(name="retriever"),
+            frontmatter={"name": "retriever", "description": "Retrieve documents."},
+            body="# R\n\nDo.\n",
+        )
+    )
+    result = MergeResult(skills=[child], plan=MergePlan(frontmatter_verdict=Verdict.REVIEW))
+    result_path = tmp_path / "result.json"
+    result_path.write_text(result.model_dump_json())
+    code = main(["emit", "api", "--result", str(result_path), "--bundles", str(bundle)])
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["requires_confirmation"] is True
+    assert any("REVIEW frontmatter verdict" in w for w in payload["warnings"])
+

@@ -107,7 +107,13 @@ Each command prints JSON to stdout. This skill reads that JSON and supplies the 
    `emit claude-code`, `emit claudeai`, and `emit marketplace` flag any description over the
    1536-char Claude Code routing cap (truncated in the skill listing, so routing keywords are lost);
    `emit api` flags a description over the 1024-char `/v1/skills` cap (the upload is rejected), plus
-   any tool or invocation frontmatter that surface does not enforce. `emit marketplace` defaults the
+   any tool or invocation frontmatter that surface does not enforce. Its output also carries the
+   pinned `anthropic-beta` headers to send (`beta_headers`; the files-api one matters only when the
+   Files API moves files), the provenance text to keep with the upload (`provenance_md`), and a
+   standing warning that a `/v1/skills` upload is workspace-wide — every member of the workspace can
+   invoke it. When the output says `requires_confirmation: true`, or any scan in the run came back
+   REVIEW, name the finding and get the user's explicit confirmation before uploading.
+   `emit marketplace` defaults the
    marketplace name and owner to the skill's slug and warns when it does (pass `--marketplace-name`
    and `--owner-name` to set them); it refuses a name reserved for official use.
 

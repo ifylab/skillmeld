@@ -477,6 +477,7 @@ def _cmd_emit(args: argparse.Namespace) -> int:
     from datetime import UTC, datetime
 
     from skillmeld.emit.package import (
+        API_SHARING_NOTE,
         api_description_warnings,
         api_surface_warnings,
         apply_source_licenses,
@@ -490,6 +491,8 @@ def _cmd_emit(args: argparse.Namespace) -> int:
         plan_support_carry,
         routing_truncation_warnings,
     )
+    from skillmeld.emit.provenance import build_provenance
+    from skillmeld.models import SKILLS_API_BETA_HEADERS, Verdict
 
     try:
         result = _load_merge_result(args.result)
@@ -509,11 +512,24 @@ def _cmd_emit(args: argparse.Namespace) -> int:
     generated_at = args.generated_at or datetime.now(UTC).isoformat(timespec="seconds")
 
     if args.surface == "api":
+        provenance = build_provenance(result, sources, generated_at=generated_at)
+        provenance += f"\n## Sharing scope\n\nUploaded via /v1/skills — {API_SHARING_NOTE}.\n"
+        requires_confirmation = result.plan.frontmatter_verdict is Verdict.REVIEW
+        warnings = [API_SHARING_NOTE]
+        if requires_confirmation:
+            warnings.append(
+                "the merge plan carries a REVIEW frontmatter verdict; confirm with the user "
+                "before uploading to a shared workspace"
+            )
+        warnings += api_surface_warnings(result) + api_description_warnings(result)
         return _emit(
             {
                 "surface": "api",
                 "skills": emit_api_payload(result),
-                "warnings": api_surface_warnings(result) + api_description_warnings(result),
+                "beta_headers": list(SKILLS_API_BETA_HEADERS),
+                "provenance_md": provenance,
+                "requires_confirmation": requires_confirmation,
+                "warnings": warnings,
             }
         )
 

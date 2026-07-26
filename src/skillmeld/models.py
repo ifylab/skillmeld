@@ -18,6 +18,16 @@ from pydantic import BaseModel, Field
 API_DESCRIPTION_LIMIT = 1024
 CLAUDE_CODE_ROUTING_LIMIT = 1536
 
+# Skills API beta headers, pinned (verified 2026-07-26 against
+# https://platform.claude.com/docs/en/build-with-claude/skills-guide). Code execution and
+# skills are always required; the files-api header matters only when the Files API moves
+# files in or out of the container. Beta identifiers get superseded — re-verify on failure.
+SKILLS_API_BETA_HEADERS = (
+    "code-execution-2025-08-25",
+    "skills-2025-10-02",
+    "files-api-2025-04-14",
+)
+
 # Marketplace names reserved for official Anthropic use; a third-party marketplace.json must not
 # claim them (Claude Code refuses the add). The server also blocks impersonation names such as
 # `official-claude-plugins`, which is a fuzzy rule we cannot reproduce locally — we enforce only

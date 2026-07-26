@@ -308,6 +308,12 @@ def _marketplace_manifest(
     }
 
 
+API_SHARING_NOTE = (
+    "a /v1/skills upload is workspace-wide: every member of the workspace can invoke the "
+    "skill, not just the uploader"
+)
+
+
 def emit_api_payload(result: MergeResult) -> list[dict[str, str]]:
     """Build per-skill payloads for the API ``/v1/skills`` upload surface."""
     payloads: list[dict[str, str]] = []

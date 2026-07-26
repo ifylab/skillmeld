@@ -16,6 +16,10 @@ All notable changes to skillmeld are recorded here. The format follows
 - `build-catalog` builds and signs the production artifacts (crawl, fetch-verify, scan, sign)
   with the signing key from `SKILLMELD_SIGNING_KEY`, and `catalog sync --base-url` points the
   client at an alternate hosted endpoint.
+- `emit api` output now carries the pinned Skills API beta headers (`beta_headers`), the
+  provenance text with a sharing-scope section (`provenance_md`), a standing warning that a
+  `/v1/skills` upload is workspace-wide, and `requires_confirmation: true` when the merge plan
+  holds a REVIEW frontmatter verdict.
 - A `marketplace` emit surface that packages the merged set as a `strict:false` Claude Code plugin
   marketplace (`.claude-plugin/marketplace.json` plus the skills tree and `PROVENANCE.md`), ready to
   host and install with `/plugin marketplace add`.
