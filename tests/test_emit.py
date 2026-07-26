@@ -70,9 +70,15 @@ def test_render_skill_md_has_frontmatter_and_body() -> None:
 
 
 def test_emit_claude_code_writes_tree(tmp_path: Path) -> None:
+    from skillmeld.emit.package import default_plugin_name
+
     result, sources = _merge()
     written = emit_claude_code(result, tmp_path, sources=sources, generated_at=WHEN)
-    assert any(p.endswith("PROVENANCE.md") for p in written)
+    # Per-set provenance name: a second set emitted into the same shared skills dir must not
+    # clobber this one's provenance.
+    set_name = default_plugin_name(result)
+    assert any(p.endswith(f"PROVENANCE-{set_name}.md") for p in written)
+    assert not (tmp_path / "PROVENANCE.md").exists()
     skill_files = [p for p in written if p.endswith("SKILL.md")]
     assert skill_files
     for path in skill_files:

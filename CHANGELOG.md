@@ -35,11 +35,20 @@ All notable changes to skillmeld are recorded here. The format follows
 - The catalog crawl resolves every source repo to its commit SHA at build time, so a published
   catalog's fetch URLs and pinned hashes stay consistent no matter what the branch does
   afterwards.
+- `emit claude-code` names the provenance file `PROVENANCE-<set>.md`, so two composed sets
+  emitted into one shared skills directory keep separate provenance instead of silently
+  overwriting each other's.
 - README places skillmeld among the newer composition tools (AgentSkillOS, SkillComposer) and
   links the Agent Skills spec home ([agentskills.io](https://agentskills.io)).
 
 ### Fixed
 
+- `eval improve` without `--baseline-judgments`/`--candidate-judgments` returns the CLI's JSON
+  error contract instead of a Python traceback.
+- Passing `ground`'s full output to `--profile` fails loudly with the fix named, instead of
+  silently validating an empty profile that turned pruning into a no-op.
+- Framework detection matches exact package names, so a dependency like `license-expression`
+  no longer misreads as Express.
 - `eval` now accepts `--sources` (parity with `merge` and `emit`), so a source whose `SKILL.md`
   omits `name:` is verified under its catalog identity instead of failing the byte-trace check.
 - The independent routing cross-check no longer routes near-miss queries on generic programming

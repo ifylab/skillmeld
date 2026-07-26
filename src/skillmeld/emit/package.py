@@ -169,7 +169,12 @@ def emit_claude_code(
     generated_at: str,
     carry: dict[str, list[tuple[str, Path]]] | None = None,
 ) -> list[str]:
-    """Write a Claude Code skills tree: ``<out>/<name>/SKILL.md`` per skill + PROVENANCE.md."""
+    """Write a Claude Code skills tree: ``<out>/<name>/SKILL.md`` per skill + provenance.
+
+    The provenance file is named ``PROVENANCE-<set>.md`` because ``--out`` is commonly a shared
+    skills directory holding earlier installs — a fixed name would silently clobber another
+    composed set's provenance.
+    """
     carry = carry or {}
     written: list[str] = []
     for skill in _emitted_skills(result):
@@ -183,7 +188,7 @@ def emit_claude_code(
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(source_file.read_bytes())
             written.append(str(dest))
-    provenance = out_dir / "PROVENANCE.md"
+    provenance = out_dir / f"PROVENANCE-{default_plugin_name(result)}.md"
     provenance.write_text(
         build_provenance(result, sources, generated_at=generated_at), encoding="utf-8"
     )

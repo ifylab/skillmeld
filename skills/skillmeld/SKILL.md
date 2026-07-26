@@ -79,7 +79,8 @@ Each command prints JSON to stdout. This skill reads that JSON and supplies the 
    with no description never triggers in Claude Code. For each child, write a short, trigger-
    friendly description and gate it through
    `run.sh eval improve --skill <index|orchestrator> --description "..."` with the trigger
-   queries and routing judgments — an edit is accepted only if structural quality holds, no
+   queries and routing judgments (`--queries`, `--baseline-judgments`, and
+   `--candidate-judgments` are all required) — an edit is accepted only if structural quality holds, no
    held-out query leaks, and the held-out routing pass-rate does not regress — measured both from
    your reported routing and from an independent engine-side pass that routes the queries against
    the descriptions, so acceptance never rests on your self-report. Phrase each description with
@@ -90,7 +91,9 @@ Each command prints JSON to stdout. This skill reads that JSON and supplies the 
    orchestrator`) only if needed. Pass `--sources <discover.json>` to `eval improve` and `eval run`
    (the same JSON you gave merge) so the verifier resolves each source's catalog identity — without
    it, a source whose `SKILL.md` omits `name:` fails the byte-trace check. Then `run.sh eval run`
-   must report `passed: true` over the set.
+   must report `passed: true` over the set — pass it `--judgments` along with `--queries`: the
+   reported-routing gate scores zero without your judgments even when `independent_trigger` is
+   perfect.
    Optional interchange: `eval improve --history <path>` keeps a portable `history.json` ledger of
    the accepted and rejected edits, and `eval run --write-evals <path>` exports the query set as a
    portable `evals.json` (both skill-creator formats). When a fetched source bundles its own evals
@@ -142,8 +145,9 @@ Two human stops on the happy path; everything else streams as narrated progress.
   Actions: Approve and install / Adjust / Dry-run / Cancel.
 - **Stop 2 — second-layer scan and write** (the install/trust gate). Re-scan the merged
   artifact (`run.sh scan <merged-bundle>`); a BLOCK here refuses the install. Write to
-  `.claude/skills/<name>/` with `SKILL.md`, supporting files, and `PROVENANCE.md` only after
-  the user accepts.
+  `.claude/skills/<name>/` with `SKILL.md` and supporting files, plus the set's
+  `PROVENANCE-<set>.md` at the skills root (the per-set name keeps one composed set's
+  provenance from overwriting another's in a shared directory), only after the user accepts.
 - **A BLOCK is never one-click overridable.** REVIEW is the only interactive security stop;
   BLOCK is refused and excluded before the user chooses. Keep BLOCK rare and high-precision so
   REVIEW prompts stay trusted.

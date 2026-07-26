@@ -181,12 +181,12 @@ def _languages(file_counts: dict[str, int]) -> list[str]:
 
 
 def _frameworks(dependencies: list[str]) -> list[str]:
+    # Exact package-name match only: substring signs misfire (license-expression is not Express).
     found: list[str] = []
     for dep in dependencies:
-        lowered = dep.lower()
-        for sign, label in FRAMEWORK_SIGNS.items():
-            if sign in lowered and label not in found:
-                found.append(label)
+        label = FRAMEWORK_SIGNS.get(dep.lower().replace("_", "-"))
+        if label and label not in found:
+            found.append(label)
     return sorted(found)
 
 

@@ -591,3 +591,45 @@ def test_emit_api_flags_a_review_frontmatter_verdict(
     assert payload["requires_confirmation"] is True
     assert any("REVIEW frontmatter verdict" in w for w in payload["warnings"])
 
+
+def test_eval_improve_without_judgments_errors_cleanly(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bundle, result_path = _marketplace_inputs(tmp_path)
+    queries = tmp_path / "queries.json"
+    queries.write_text(
+        '[{"id": "q1", "text": "retrieve docs", "kind": "trigger", "expected_skill": "retriever"}]'
+    )
+    code = main(
+        [
+            "eval",
+            "improve",
+            "--result",
+            str(result_path),
+            "--bundles",
+            str(bundle),
+            "--skill",
+            "0",
+            "--description",
+            "Retrieve matching documents.",
+            "--queries",
+            str(queries),
+        ]
+    )
+    out = json.loads(capsys.readouterr().out)
+    assert code == 1
+    assert "--baseline-judgments" in out["error"]
+
+
+def test_profile_flag_refuses_grounds_full_output(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ground_output = tmp_path / "ground.json"
+    ground_output.write_text('{"profile": {"summary": ""}, "evidence": {"root": "."}}')
+    bundle = tmp_path / "b"
+    bundle.mkdir()
+    (bundle / "SKILL.md").write_text("---\nname: b\ndescription: d\n---\n# B\n\nGo.\n")
+    code = main(["merge", "--bundles", str(bundle), "--profile", str(ground_output)])
+    out = json.loads(capsys.readouterr().out)
+    assert code == 1
+    assert "'profile' object" in out["error"]

@@ -80,3 +80,10 @@ def test_cli_ground_missing(capsys: pytest.CaptureFixture[str]) -> None:
     out = json.loads(capsys.readouterr().out)
     assert code == 1
     assert "error" in out
+
+
+def test_frameworks_match_exact_package_names_only() -> None:
+    from skillmeld.grounding import _frameworks
+
+    assert _frameworks(["license-expression", "nextcloud-client", "preact-compat"]) == []
+    assert _frameworks(["express", "pydantic", "scikit_learn"]) == ["Express", "Pydantic"]

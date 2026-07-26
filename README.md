@@ -22,7 +22,7 @@ Composition tools are appearing on other layers too: [AgentSkillOS](https://gith
 A Claude Code skill drives a bundled Python engine through one pipeline:
 
 ```
-intake -> ground -> discover -> select (<=3) -> security gate -> merge -> eval -> emit
+intake -> ground -> discover -> select (<=3) -> fetch -> security gate -> merge -> eval -> emit
 ```
 
 - **ground** scans your repo into a use-case profile, locally.
@@ -44,21 +44,27 @@ A PyPI release for one-line install (`uv tool install skillmeld` / `pipx install
 
 ## Quickstart
 
-As a skill, add the marketplace, install the plugin, and invoke it with your use case:
+As a skill — from the clone root, add the marketplace, install the plugin, and invoke it with
+your use case:
 
 ```
-/plugin marketplace add ./skillmeld
+/plugin marketplace add .
 /plugin install skillmeld@ifylab
 /skillmeld I get IFC models from architects and need a quantity takeoff plus validation
 ```
 
-Or exercise the engine directly from the CLI (each command prints JSON):
+Or exercise individual stages directly from the CLI (each command prints JSON):
 
 ```sh
+uv run skillmeld catalog sync                   # fetch and verify the hosted catalog
 uv run skillmeld ground .                       # scan a repo into a profile
 uv run skillmeld scan path/to/skill --license   # security- and license-scan a bundle
 uv run skillmeld merge --bundles a/ b/ --profile profile.json
 ```
+
+The full pipeline — `discover`, `select`, `fetch`, the eval loop, and every JSON contract these
+commands exchange — is walked step by step in [skills/skillmeld/SKILL.md](skills/skillmeld/SKILL.md).
+Offline, `dev-catalog` builds the same signed catalog locally from repos you name.
 
 ## What it isn't
 
@@ -79,7 +85,7 @@ In active development, built in the open one piece at a time. The discovery, sec
 Python 3.12, managed with uv. Ruff for lint and format, ty for type-checking, pytest for tests.
 
 ```sh
-uv run ruff check . && uv run ty check && uv run pytest
+uv run ruff check . && uv run ruff format --check . && uv run ty check && uv run pytest
 ```
 
 ## Contributing

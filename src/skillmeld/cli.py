@@ -40,6 +40,21 @@ def _read_text(source: str) -> str:
     return Path(source).read_text(encoding="utf-8")
 
 
+def _load_profile(profile_path: str) -> UseCaseProfile:
+    """Load a use-case profile, refusing ground's full output passed by mistake.
+
+    ``ground`` prints ``{"profile": ..., "evidence": ...}``; validated directly, every profile
+    field defaults to empty and pruning silently becomes a no-op. Fail loudly instead.
+    """
+    parsed = json.loads(_read_text(profile_path))
+    if isinstance(parsed, dict) and "profile" in parsed and "summary" not in parsed:
+        raise ValueError(
+            "this is ground's full output; pass its 'profile' object instead, with "
+            "summary and tasks completed"
+        )
+    return UseCaseProfile.model_validate(parsed)
+
+
 def _skill_target(value: str) -> int | str:
     """Parse ``--skill``: a child index, or the literal ``orchestrator``."""
     if value == "orchestrator":
@@ -146,8 +161,8 @@ def _cmd_discover(profile_path: str, catalog_path: str | None, limit: int) -> in
     from skillmeld.registries.catalog_client import CatalogError
 
     try:
-        profile = UseCaseProfile.model_validate_json(_read_text(profile_path))
-    except (OSError, ValidationError) as exc:
+        profile = _load_profile(profile_path)
+    except (OSError, ValueError, ValidationError) as exc:
         return _error(f"profile not readable: {exc}")
     try:
         if catalog_path is not None:
@@ -250,8 +265,8 @@ def _cmd_merge(
     from skillmeld.models import Conflict
 
     try:
-        profile = UseCaseProfile.model_validate_json(_read_text(profile_path))
-    except (OSError, ValidationError) as exc:
+        profile = _load_profile(profile_path)
+    except (OSError, ValueError, ValidationError) as exc:
         return _error(f"profile not readable: {exc}")
     sources = []
     for bundle in bundles:
@@ -370,6 +385,8 @@ def _cmd_eval(args: argparse.Namespace) -> int:
 
     if queries is None:
         return _error("eval improve requires --queries")
+    if not args.baseline_judgments or not args.candidate_judgments:
+        return _error("eval improve requires --baseline-judgments and --candidate-judgments")
     baseline = [
         TriggerJudgment.model_validate(j) for j in json.loads(_read_text(args.baseline_judgments))
     ]
