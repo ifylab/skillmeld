@@ -1,6 +1,6 @@
 # skillmeld
 
-<!-- A demo GIF of a real /skillmeld run (the Grasshopper conflict beat) is planned as the README hero — see workbook/Plan/repo-presentation.md and roadmap.md. -->
+<!-- A demo GIF of a real /skillmeld run is planned as the README hero. -->
 
 [![CI](https://github.com/ifylab/skillmeld/actions/workflows/ci.yml/badge.svg)](https://github.com/ifylab/skillmeld/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/github/license/ifylab/skillmeld)](LICENSE)

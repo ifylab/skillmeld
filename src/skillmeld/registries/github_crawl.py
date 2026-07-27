@@ -123,6 +123,7 @@ def _build_entry(
 
     files: list[SkillFile] = []
     skill_md_text = ""
+    license_text = ""
     for path in member_paths:
         rel = path[len(prefix) :]
         content = _get_bytes(http, f"{fetch_base}/{rel}")
@@ -131,15 +132,25 @@ def _build_entry(
         files.append(SkillFile(path=rel, sha256=sha256_hex(content)))
         if rel == "SKILL.md":
             skill_md_text = content.decode("utf-8", errors="replace")
+        elif rel in _LICENSE_NAMES and not license_text:
+            license_text = content.decode("utf-8", errors="replace")
     if not skill_md_text:
         return None
+
+    # Repos like anthropics/skills license each skill in its own folder with no root LICENSE;
+    # without this fallback such entries resolve license-unknown and drag a merged set to unknown.
+    entry_license = license_info
+    if license_info.spdx_id is None and license_text:
+        spdx = detect_text(license_text)
+        if spdx:
+            entry_license = LicenseInfo(spdx_id=spdx, source="license-file")
 
     frontmatter, _ = _split_frontmatter(skill_md_text)
     name = str(frontmatter.get("name") or (skill_dir.rsplit("/", 1)[-1] or repo.split("/")[-1]))
     return CatalogEntry(
         id=f"{repo}:{skill_dir}" if skill_dir else repo,
         source=SkillSource(
-            name=name, repo=repo, url=f"https://github.com/{repo}", license=license_info
+            name=name, repo=repo, url=f"https://github.com/{repo}", license=entry_license
         ),
         description=str(frontmatter.get("description", "")),
         tags=_as_list(frontmatter.get("tags")),

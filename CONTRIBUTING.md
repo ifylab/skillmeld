@@ -20,7 +20,8 @@ Requires [uv](https://docs.astral.sh/uv/).
     skills/skillmeld/   the Claude Code skill that drives the engine (SKILL.md + scripts/run.sh).
     .claude-plugin/     plugin + marketplace manifests, so the skill installs as a plugin.
     tests/              unit and golden tests, with fixtures/.
-    hosted/             placeholder for the hosted-catalog build (not built yet).
+    hosted/             the production catalog builder (build-catalog), run weekly by CI to
+                        publish the hosted catalog that `catalog sync` downloads.
 
 The package sits under `src/` (the "src layout") on purpose: it is not importable just because
 its folder happens to be the working directory, so tests and tools run against the installed

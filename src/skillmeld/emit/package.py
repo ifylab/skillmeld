@@ -358,6 +358,19 @@ def api_surface_warnings(result: MergeResult) -> list[str]:
     return warnings
 
 
+def api_support_file_warnings(carry: dict[str, list[tuple[str, Path]]]) -> list[str]:
+    """Support files the ``/v1/skills`` payload cannot carry (each entry is SKILL.md text only)."""
+    warnings: list[str] = []
+    for name, files in sorted(carry.items()):
+        if files:
+            rels = ", ".join(rel for rel, _ in files)
+            warnings.append(
+                f"{name}: support file(s) {rels} are not in the /v1/skills payload; "
+                "upload them separately via the Files API"
+            )
+    return warnings
+
+
 def routing_truncation_warnings(result: MergeResult) -> list[str]:
     """Descriptions over the Claude Code routing cap, which get truncated in the skill listing.
 

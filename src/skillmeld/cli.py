@@ -496,6 +496,7 @@ def _cmd_emit(args: argparse.Namespace) -> int:
     from skillmeld.emit.package import (
         API_SHARING_NOTE,
         api_description_warnings,
+        api_support_file_warnings,
         api_surface_warnings,
         apply_source_licenses,
         default_plugin_name,
@@ -539,6 +540,7 @@ def _cmd_emit(args: argparse.Namespace) -> int:
                 "before uploading to a shared workspace"
             )
         warnings += api_surface_warnings(result) + api_description_warnings(result)
+        warnings += api_support_file_warnings(plan_support_carry(result, sources, args.bundles))
         return _emit(
             {
                 "surface": "api",

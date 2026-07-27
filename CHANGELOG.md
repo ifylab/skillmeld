@@ -19,7 +19,8 @@ All notable changes to skillmeld are recorded here. The format follows
 - `emit api` output now carries the pinned Skills API beta headers (`beta_headers`), the
   provenance text with a sharing-scope section (`provenance_md`), a standing warning that a
   `/v1/skills` upload is workspace-wide, and `requires_confirmation: true` when the merge plan
-  holds a REVIEW frontmatter verdict.
+  holds a REVIEW frontmatter verdict. It also warns when a composed skill carries support files,
+  which the `/v1/skills` payload cannot include — those travel separately via the Files API.
 - A `marketplace` emit surface that packages the merged set as a `strict:false` Claude Code plugin
   marketplace (`.claude-plugin/marketplace.json` plus the skills tree and `PROVENANCE.md`), ready to
   host and install with `/plugin marketplace add`.
@@ -49,6 +50,9 @@ All notable changes to skillmeld are recorded here. The format follows
   silently validating an empty profile that turned pruning into a no-op.
 - Framework detection matches exact package names, so a dependency like `license-expression`
   no longer misreads as Express.
+- The catalog crawl reads a license file inside the skill's own folder when the repo has none at
+  the root, so a source licensed per-skill no longer resolves license-unknown and drags a whole
+  composed set to unknown.
 - `eval` now accepts `--sources` (parity with `merge` and `emit`), so a source whose `SKILL.md`
   omits `name:` is verified under its catalog identity instead of failing the byte-trace check.
 - The independent routing cross-check no longer routes near-miss queries on generic programming

@@ -259,3 +259,26 @@ def test_signing_key_from_env_guards(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(cat.TRUSTED_KEYS, cat.PRODUCTION_KEY_ID, bytes.fromhex(public_hex))
     loaded = signing_key_from_env()
     assert loaded.public_key().public_bytes_raw().hex() == public_hex
+
+
+def test_crawl_falls_back_to_a_skill_dir_license() -> None:
+    sha = "beef0004" + "0" * 32
+    tree = {
+        "tree": [
+            {"path": "s/SKILL.md", "type": "blob"},
+            {"path": "s/LICENSE.txt", "type": "blob"},
+        ]
+    }
+    files = {
+        "s/SKILL.md": b"---\nname: s\ndescription: d\n---\n# S\n\nGo.\n",
+        "s/LICENSE.txt": (
+            b"MIT License\n\nPermission is hereby granted, free of charge, to any person...\n"
+        ),
+    }
+    client = httpx.Client(
+        transport=httpx.MockTransport(_repo_handler("acme/perdir", sha, "main", tree, files))
+    )
+    entries = crawl(["acme/perdir"], client=client)
+    assert len(entries) == 1
+    assert entries[0].source.license.spdx_id == "MIT"
+    assert entries[0].source.license.source == "license-file"

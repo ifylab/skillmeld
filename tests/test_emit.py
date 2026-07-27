@@ -436,3 +436,17 @@ def test_emit_marketplace_honors_explicit_plugin_name(tmp_path: Path) -> None:
     assert _read_manifest(tmp_path)["plugins"][0]["name"] == "my-plugin"
     assert marketplace_name_blocker("agent-skills") is not None
     assert marketplace_name_blocker("my-cool-skills") is None
+
+
+def test_api_support_file_warnings_name_the_files() -> None:
+    from pathlib import Path as P
+
+    from skillmeld.emit.package import api_support_file_warnings
+
+    carry = {
+        "skill-creator": [("references/schemas.md", P("/x")), ("assets/a.html", P("/y"))],
+        "bare": [],
+    }
+    warnings = api_support_file_warnings(carry)
+    assert len(warnings) == 1
+    assert "references/schemas.md" in warnings[0] and "Files API" in warnings[0]
