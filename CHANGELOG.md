@@ -59,6 +59,10 @@ All notable changes to skillmeld are recorded here. The format follows
   vocabulary alone ("write", "python", "code", ...), and a token shared by every child carries no
   routing weight — `independent_trigger` and `routing_disagreements` stay high-precision.
 
+### Security
+
+- `cryptography` raised to 49.0 — wheels before 48.0.1 bundled a vulnerable OpenSSL.
+
 ## [0.1.0] - 2026-06-13
 
 First public release. The full pipeline is implemented and tested: intake, repo
