@@ -14,6 +14,11 @@ All notable changes to skillmeld are recorded here. The format follows
   skills and improves are description-only, so a body finding had no in-engine remediation and
   blocked `eval run` from ever reaching `passed: true` on an affected set.
 
+### Security
+
+- `cryptography` raised to 50.0 — earlier versions expose a timing oracle in PKCS#7
+  decryption, an API skillmeld never calls.
+
 ## [0.2.0] - 2026-07-26
 
 ### Added
