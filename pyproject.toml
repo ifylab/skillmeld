@@ -9,7 +9,7 @@ authors = [{ name = "Hossein Zargar" }]
 keywords = ["claude", "agent-skills", "skills", "compose", "merge"]
 dependencies = [
     "bandit>=1.8",
-    "cryptography>=43",
+    "cryptography>=50.0.0",
     "httpx>=0.27",
     "license-expression>=30",
     "markdown-it-py>=3",
