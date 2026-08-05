@@ -93,7 +93,9 @@ Each command prints JSON to stdout. This skill reads that JSON and supplies the 
    it, a source whose `SKILL.md` omits `name:` fails the byte-trace check. Then `run.sh eval run`
    must report `passed: true` over the set — pass it `--judgments` along with `--queries`: the
    reported-routing gate scores zero without your judgments even when `independent_trigger` is
-   perfect.
+   perfect. Quality `warnings` never block `passed`; relay them in the review below. A body
+   warning (an unescaped html-like tag inherited from a source) has no in-engine fix — bodies are
+   byte-traced from sources — so do not spend improve rounds trying to clear it.
    Optional interchange: `eval improve --history <path>` keeps a portable `history.json` ledger of
    the accepted and rejected edits, and `eval run --write-evals <path>` exports the query set as a
    portable `evals.json` (both skill-creator formats). When a fetched source bundles its own evals

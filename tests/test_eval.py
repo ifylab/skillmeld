@@ -94,7 +94,7 @@ def test_quality_flags_empty_description() -> None:
     assert any("description is empty" in issue for issue in report.issues)
 
 
-def test_quality_allows_code_operators_but_flags_html_tags() -> None:
+def test_quality_allows_code_operators_but_warns_html_tags() -> None:
     code_body = (
         "# Skill\n\nGuidance.\n\n"
         "```python\nif count < 1 or ratio > 5:\n    items = List<int>()\n```\n"
@@ -106,17 +106,20 @@ def test_quality_allows_code_operators_but_flags_html_tags() -> None:
         body=code_body,
     )
     ok_report = score_quality(ok)
-    assert not any("html-like tag" in issue for issue in ok_report.issues)
+    assert not any("html-like tag" in warning for warning in ok_report.warnings)
     assert ok_report.passed
 
+    # A tag-shaped span is inherited body content: the body is byte-traced from its source and
+    # improves are description-only, so there is no in-engine remediation — warn, never block.
     tagged = SkillDoc(
         source=SkillSource(name="y"),
         frontmatter={"name": "y", "description": "Has a real tag."},
         body="# Skill\n\nPut <div>content</div> in the page.\n",
     )
     report = score_quality(tagged)
-    assert any("html-like tag" in issue for issue in report.issues)
-    assert not report.passed
+    assert any("html-like tag" in warning for warning in report.warnings)
+    assert not report.issues
+    assert report.passed
 
 
 # --- trigger scoring + split ------------------------------------------------------------
@@ -189,6 +192,29 @@ def test_evaluate_flags_missing_descriptions_then_passes_when_authored() -> None
     authored = evaluate(result, sources)
     assert authored.passed, [issue for q in authored.quality for issue in q.issues]
     assert len(authored.quality) == len(result.skills)
+
+
+def test_evaluate_passes_a_set_with_an_inherited_html_tag() -> None:
+    # The set-level gate must stay reachable when a source body carries a prose tag the composer
+    # copies verbatim; the finding surfaces as a per-skill warning, not a hard issue.
+    tagged_source = SkillDoc(
+        source=SkillSource(name="reviewer"),
+        body="# Reviewer\n\nReview documents.\n\n- Never approve a <Bad> draft without review.\n",
+    )
+    sources = [SKILL_A, tagged_source]
+    atoms = [a for s in sources for a in parse_skill(s)]
+    survivors = collapse(atoms).survivors
+    grouping = default_grouping(survivors)
+    pruned = prune_and_close(survivors, PROFILE)
+    part = partition(pruned.kept, grouping.groups)
+    result = assemble(part, {a.id: a for a in survivors}, kinds=grouping.kinds)
+    for skill in result.skills:
+        name = skill.doc.frontmatter["name"]
+        skill.doc.frontmatter["description"] = f"Handles {name} tasks for the user's project."
+    report = evaluate(result, sources)
+    assert any("html-like tag" in w for q in report.quality for w in q.warnings)
+    assert report.verifier_problems == []
+    assert report.passed, [issue for q in report.quality for issue in q.issues]
 
 
 def test_merge_gives_the_orchestrator_a_nonempty_description() -> None:

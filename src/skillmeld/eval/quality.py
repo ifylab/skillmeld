@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Deterministic structural-quality scoring for an emitted skill. No model calls.
 
-Hard issues (over-length name/description, a reserved word, forbidden characters) gate; the
-strong/weak directive-marker ratio is a soft quality signal that surfaces but never blocks.
+Hard issues gate only surfaces the composition itself authors (name, description, frontmatter).
+Inherited body content never blocks: bodies are byte-traced from sources and improves are
+description-only, so a body finding has no in-engine remediation — it surfaces as a warning
+(html-like tags) or a soft signal (the strong/weak directive-marker ratio) instead.
 """
 
 from __future__ import annotations
@@ -84,7 +86,7 @@ def score_quality(doc: SkillDoc) -> QualityReport:
             "so the API /v1/skills surface would reject it"
         )
     if _HTML_TAG.search(_CODE_SPAN.sub(" ", doc.body)):
-        issues.append("body contains an unescaped html-like tag")
+        warnings.append("body contains an unescaped html-like tag")
     bad_keys = sorted(set(doc.frontmatter) - ALLOWED_FRONTMATTER)
     if bad_keys:
         issues.append(f"unknown frontmatter keys: {', '.join(bad_keys)}")

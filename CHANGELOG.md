@@ -4,6 +4,16 @@ All notable changes to skillmeld are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- The quality gate no longer hard-fails a skill whose body carries an unescaped html-like tag;
+  the finding surfaces as a warning instead. Hard issues now cover only what the composition
+  itself authors (name, description, frontmatter) — composed bodies are byte-traced from source
+  skills and improves are description-only, so a body finding had no in-engine remediation and
+  blocked `eval run` from ever reaching `passed: true` on an affected set.
+
 ## [0.2.0] - 2026-07-26
 
 ### Added
