@@ -21,6 +21,8 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync
+      - name: Install scancode for gold-standard license detection
+        run: uv tool install scancode-toolkit
       - name: Build and sign the catalog
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -281,12 +281,15 @@ def test_emit_marketplace_manifest_schema(tmp_path: Path) -> None:
     manifest = _read_manifest(tmp_path)
     assert manifest["name"] == "my-skills"
     assert manifest["owner"]["name"] == "me"
+    assert manifest["metadata"]["version"] == "0.1.0"
+    assert manifest["metadata"]["description"]
+    assert "description" not in manifest  # top-level moved into the metadata wrapper
     entry = manifest["plugins"][0]
     assert entry["name"]
     assert entry["source"] == "./"
     assert entry["strict"] is False
     assert isinstance(entry["skills"], list) and entry["skills"]
-    assert "version" not in entry
+    assert entry["version"] == "0.1.0"  # plugin update compares version strings
 
 
 def test_emit_marketplace_skills_paths_match_tree(tmp_path: Path) -> None:

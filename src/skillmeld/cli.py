@@ -242,6 +242,23 @@ def _cmd_scan(skill: str, include_license: bool, sources_path: str | None = None
                     for finding in license_findings
                     if finding.rule_id != "core:license-unknown"
                 ]
+            else:
+                # Same finding, two very different situations — say which one this is.
+                detail = (
+                    "the catalog also has no SPDX for this source, so unknown is the "
+                    "settled state, not a bundle omission"
+                    if catalog_license is not None
+                    else "this bundle's hash is not in the provided sources, so the "
+                    "catalog cannot fill it in"
+                )
+                license_findings = [
+                    finding.model_copy(
+                        update={"message": f"{finding.message.rstrip('.')} — {detail}."}
+                    )
+                    if finding.rule_id == "core:license-unknown"
+                    else finding
+                    for finding in license_findings
+                ]
         findings = [*report.findings, *license_findings]
         report = report.model_copy(
             update={
@@ -450,6 +467,16 @@ def _cmd_dev_catalog(args: argparse.Namespace) -> int:
     )
 
 
+def _cmd_skillsmp_scout(queries: list[str], limit: int) -> int:
+    from skillmeld.registries.skillsmp import SkillsMPError, discover_repos
+
+    try:
+        report = discover_repos(queries, per_query=limit)
+    except SkillsMPError as exc:
+        return _error(str(exc))
+    return _emit(report)
+
+
 def _cmd_build_catalog(args: argparse.Namespace) -> int:
     from datetime import UTC, datetime
 
@@ -608,6 +635,17 @@ def _cmd_emit(args: argparse.Namespace) -> int:
             )
         if args.owner_email:
             owner["email"] = args.owner_email
+        if args.owner_url:
+            owner["url"] = args.owner_url
+
+        if args.marketplace_version:
+            marketplace_version = args.marketplace_version
+        else:
+            marketplace_version = "0.1.0"
+            warnings.append(
+                "marketplace version defaulted to '0.1.0'; bump --marketplace-version on a "
+                "re-composition so `claude plugin update` sees the change"
+            )
 
         written = emit_marketplace(
             result,
@@ -616,6 +654,7 @@ def _cmd_emit(args: argparse.Namespace) -> int:
             generated_at=generated_at,
             marketplace_name=marketplace_name,
             owner=owner,
+            version=marketplace_version,
             plugin_name=plugin_name,
             carry=carry,
         )
@@ -660,11 +699,32 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"skillmeld {__version__}")
     sub = parser.add_subparsers(dest="command", metavar="<command>")
 
-    catalog = sub.add_parser("catalog", help="Fetch and verify the hosted data layer.")
+    catalog = sub.add_parser(
+        "catalog",
+        help="Fetch and verify the hosted data layer.",
+        description=(
+            "sync fetches the hosted layer and signature-verifies it into the cache; verify "
+            "strictly re-checks the cached snapshot offline; status reports the cache state. "
+            "discover then trusts the last verified sync — verification happens at sync/verify "
+            "time, not on every read."
+        ),
+    )
     catalog.add_argument("action", choices=["sync", "verify", "status"])
     catalog.add_argument(
         "--base-url", help="Hosted layer base URL (default: the production URL; sync only)."
     )
+
+    scout = sub.add_parser(
+        "skillsmp-scout",
+        help="Search SkillsMP for candidate repos to curate into the catalog sources.",
+        description=(
+            "Authed breadth discovery over SkillsMP (needs SKILLSMP_API_KEY). Prints candidate "
+            "owner/name repos ranked by stars; it never edits the curated source list — "
+            "membership in hosted/sources.py stays a deliberate decision."
+        ),
+    )
+    scout.add_argument("--queries", nargs="+", required=True, help="Search terms, one scout each.")
+    scout.add_argument("--limit", type=int, default=100, help="Max hits per query (page cap 100).")
 
     intake = sub.add_parser("intake", help="Normalize a use case and flag if it is too thin.")
     intake.add_argument("use_case")
@@ -735,37 +795,39 @@ def build_parser() -> argparse.ArgumentParser:
 
     evaluate = sub.add_parser("eval", help="Evaluate or improve a merged set (no model calls).")
     evaluate.add_argument("action", choices=["run", "improve"])
-    evaluate.add_argument("--result", required=True, help="Merge result/run JSON path, or -.")
-    evaluate.add_argument("--bundles", nargs="+", required=True, help="Source bundle directories.")
-    evaluate.add_argument("--queries", help="Trigger-eval queries JSON (list).")
-    evaluate.add_argument("--judgments", help="Routing judgments JSON for eval run (list).")
-    evaluate.add_argument(
-        "--skill",
-        type=_skill_target,
-        default=0,
-        help="Child index or 'orchestrator' to edit (improve).",
+    eval_shared = evaluate.add_argument_group("shared flags (run and improve)")
+    eval_shared.add_argument("--result", required=True, help="Merge result/run JSON path, or -.")
+    eval_shared.add_argument(
+        "--bundles", nargs="+", required=True, help="Source bundle directories."
     )
-    evaluate.add_argument("--description", default="", help="Candidate description (improve).")
-    evaluate.add_argument("--baseline-judgments", help="Baseline routing judgments (improve).")
-    evaluate.add_argument("--candidate-judgments", help="Candidate routing judgments (improve).")
-    evaluate.add_argument(
+    eval_shared.add_argument("--queries", help="Trigger-eval queries JSON (list).")
+    eval_shared.add_argument(
         "--sources",
         help="discover/select JSON; align source identity to the catalog (as merge/emit).",
     )
-    evaluate.add_argument(
+    eval_shared.add_argument(
         "--ingest-source-evals",
         action="store_true",
         help="Read each bundle's evals/evals.json as extra train-side trigger queries.",
     )
-    evaluate.add_argument(
+    eval_run = evaluate.add_argument_group("run-only flags")
+    eval_run.add_argument("--judgments", help="Routing judgments JSON (list).")
+    eval_run.add_argument(
         "--write-evals",
-        help="Write the query set as a skill-creator evals.json to this path (run).",
+        help="Write the query set as a skill-creator evals.json to this path.",
     )
-    evaluate.add_argument(
+    eval_improve = evaluate.add_argument_group("improve-only flags")
+    eval_improve.add_argument(
+        "--skill", type=_skill_target, default=0, help="Child index or 'orchestrator' to edit."
+    )
+    eval_improve.add_argument("--description", default="", help="Candidate description.")
+    eval_improve.add_argument("--baseline-judgments", help="Baseline routing judgments.")
+    eval_improve.add_argument("--candidate-judgments", help="Candidate routing judgments.")
+    eval_improve.add_argument(
         "--history",
         help="history.json improvement ledger to append this improve outcome to.",
     )
-    evaluate.add_argument("--generated-at", help="Override the ledger timestamp (for tests).")
+    eval_improve.add_argument("--generated-at", help="Override the ledger timestamp (for tests).")
 
     emit = sub.add_parser("emit", help="Package the merged set for a surface.")
     emit.add_argument("surface", choices=["claude-code", "claudeai", "api", "marketplace"])
@@ -782,6 +844,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     emit.add_argument("--owner-name", help="Marketplace maintainer name (marketplace surface).")
     emit.add_argument("--owner-email", help="Marketplace maintainer email (marketplace surface).")
+    emit.add_argument("--owner-url", help="Marketplace maintainer URL (marketplace surface).")
+    emit.add_argument(
+        "--marketplace-version",
+        help="Marketplace + plugin version (marketplace surface; bump on re-composition).",
+    )
 
     return parser
 
@@ -803,6 +870,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_dev_catalog(args)
     if command == "build-catalog":
         return _cmd_build_catalog(args)
+    if command == "skillsmp-scout":
+        return _cmd_skillsmp_scout(args.queries, args.limit)
     if command == "discover":
         return _cmd_discover(args.profile, args.catalog, args.limit)
     if command == "select":

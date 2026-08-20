@@ -282,3 +282,38 @@ def test_crawl_falls_back_to_a_skill_dir_license() -> None:
     assert len(entries) == 1
     assert entries[0].source.license.spdx_id == "MIT"
     assert entries[0].source.license.source == "license-file"
+
+
+def test_scancode_expression_reads_the_first_usable_spdx() -> None:
+    from skillmeld.registries.github_crawl import _scancode_expression
+
+    report = {
+        "files": [
+            {"detected_license_expression_spdx": None},
+            {"detected_license_expression_spdx": "UNKNOWN"},
+            {"detected_license_expression_spdx": "BSD-3-Clause"},
+        ]
+    }
+    assert _scancode_expression(report) == "BSD-3-Clause"
+    assert _scancode_expression({"files": []}) is None
+    assert _scancode_expression("garbage") is None
+
+
+def test_detect_license_text_prefers_fingerprints_and_survives_absent_scancode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from skillmeld.registries import github_crawl
+
+    called = False
+
+    def _no_binary(_name: str) -> None:
+        nonlocal called
+        called = True
+        return None
+
+    monkeypatch.setattr(github_crawl.shutil, "which", _no_binary)
+    mit = "MIT License\n\nPermission is hereby granted, free of charge, to any person...\n"
+    assert github_crawl._detect_license_text(mit) == "MIT"
+    assert called is False  # fingerprint hit never consults scancode
+    assert github_crawl._detect_license_text("all rights reserved, bespoke terms") is None
+    assert called is True  # unknown text tried the escalation and found no binary

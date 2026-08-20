@@ -37,7 +37,9 @@ Each command prints JSON to stdout. This skill reads that JSON and supplies the 
    `tasks` (3-6 representative tasks in the user's words), then save the completed profile
    JSON to a temp file.
 3. Discover — `run.sh catalog sync` first refreshes the signed catalog (fast when fresh;
-   offline it falls back to the last verified sync), then `run.sh discover --profile
+   offline it falls back to the last verified sync). The trust model: verification happens at
+   sync time, not on every read — `catalog verify` strictly re-checks the cached snapshot
+   offline, while `discover` trusts the last verified sync. Then `run.sh discover --profile
    <profile.json>` prefilters it and prints scored candidates with per-match evidence
    (`matched`). Skills already blocked by the verdict index are dropped before anyone sees
    them.
@@ -113,8 +115,9 @@ Each command prints JSON to stdout. This skill reads that JSON and supplies the 
    1536-char Claude Code routing cap (truncated in the skill listing, so routing keywords are lost);
    `emit api` flags a description over the 1024-char `/v1/skills` cap (the upload is rejected), plus
    any tool or invocation frontmatter that surface does not enforce. Its output also carries the
-   pinned `anthropic-beta` headers to send (`beta_headers`; the files-api one matters only when the
-   Files API moves files), the provenance text to keep with the upload (`provenance_md`), and a
+   `anthropic-beta` headers to send (`beta_headers`; Skills are GA so the skills and
+   code-execution identifiers are optional opt-ins, but the files-api one is still required when
+   the Files API moves files), the provenance text to keep with the upload (`provenance_md`), and a
    standing warning that a `/v1/skills` upload is workspace-wide — every member of the workspace can
    invoke it. When the output says `requires_confirmation: true`, or any scan in the run came back
    REVIEW, name the finding and get the user's explicit confirmation before uploading.
@@ -192,7 +195,12 @@ The JSON shapes you author by hand, so you do not have to read the engine source
   (the docs' `query`/`expected_behavior` shape is accepted on ingest); `history.json` is the
   improve ledger — a `v0` baseline, then one iteration per `eval improve` graded `won`/`lost`,
   with `current_best` tracking the accepted chain. Ingested queries are listed as
-  `ingested_query_ids` in the `eval run` report and always land train-side.
+  `ingested_query_ids` in the `eval run` report and always land train-side. `--write-evals`
+  keeps your query numbering when the ids carry unique digits (`q7` exports as case `7`).
+- **Catalog status** (`catalog status`): before any sync the shape is
+  `{"cached": false, "cache_dir": "..."}`; after one it is `{"cached": true, "cache_dir": "...",
+  "generated_at": "...", "key_id": "...", "artifacts": [...]}` — the shape varies by state on
+  purpose, so key off `cached`.
 - **Carrying source identity (`--sources`)**: `merge`, `emit`, and `eval` all accept
   `--sources <discover.json>` to re-attach what discovery knew about each source (matched by bundle
   hash): its license and its catalog name. Pass it so the plan and `PROVENANCE.md` show the real

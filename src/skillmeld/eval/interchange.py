@@ -13,6 +13,7 @@ skill output.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal, cast
@@ -132,14 +133,26 @@ def dump_evals(queries: list[TriggerQuery], skill_name: str, path: Path) -> Eval
 
     The export is the interchange view of the trigger eval: what each prompt is expected to
     route to. skill-creator keeps this file at ``evals/evals.json`` inside the skill directory.
+    Caller ids survive when they carry usable digits ("q7" -> 7, unique across the set), so the
+    export stays matchable against the caller's own queries and judgments; only ambiguous id
+    sets fall back to sequential numbering.
     """
-    cases = [
-        _interchange_case(number, query)
-        for number, query in enumerate(sorted(queries, key=lambda q: q.id), start=1)
-    ]
+    ordered = sorted(queries, key=lambda query: query.id)
+    derived = [_numeric_id(query.id) for query in ordered]
+    numeric = [number for number in derived if number is not None]
+    if len(numeric) == len(ordered) and len(set(numeric)) == len(numeric):
+        pairs = sorted(zip(numeric, ordered, strict=True), key=lambda pair: pair[0])
+    else:
+        pairs = list(enumerate(ordered, start=1))
+    cases = [_interchange_case(number, query) for number, query in pairs]
     document = EvalsFile(skill_name=skill_name, evals=cases)
     _write_json(document.model_dump(), path, "evals.json")
     return document
+
+
+def _numeric_id(query_id: str) -> int | None:
+    digits = re.sub(r"\D", "", query_id)
+    return int(digits) if digits else None
 
 
 def _interchange_case(number: int, query: TriggerQuery) -> EvalCase:

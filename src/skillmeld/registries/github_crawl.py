@@ -9,7 +9,12 @@ runtime dependency); the HTTP client is injectable so tests run without network.
 
 from __future__ import annotations
 
+import json
 import os
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
 from posixpath import dirname
 from typing import cast
 
@@ -141,7 +146,7 @@ def _build_entry(
     # without this fallback such entries resolve license-unknown and drag a merged set to unknown.
     entry_license = license_info
     if license_info.spdx_id is None and license_text:
-        spdx = detect_text(license_text)
+        spdx = _detect_license_text(license_text)
         if spdx:
             entry_license = LicenseInfo(spdx_id=spdx, source="license-file")
 
@@ -166,9 +171,61 @@ def _repo_license(http: httpx.Client, repo: str, ref: str, blobs: set[str]) -> L
         if name in blobs:
             content = _get_bytes(http, f"{_RAW}/{repo}/{ref}/{name}")
             if content is not None:
-                spdx = detect_text(content.decode("utf-8", errors="replace"))
+                spdx = _detect_license_text(content.decode("utf-8", errors="replace"))
                 return LicenseInfo(spdx_id=spdx, source="license-file")
     return LicenseInfo()
+
+
+def _detect_license_text(text: str) -> str | None:
+    """Fingerprints first; scancode-toolkit fills the gaps when installed.
+
+    scancode is the gold standard but far too heavy to ship as a client dependency, so it is
+    installed only where the catalog is built (the weekly CI workflow) and consulted only for
+    texts the fingerprints cannot identify — its verdict is baked into the signed catalog and
+    every client just reads it.
+    """
+    spdx = detect_text(text)
+    if spdx is not None:
+        return spdx
+    return _scancode_detect(text)
+
+
+def _scancode_detect(text: str) -> str | None:
+    binary = shutil.which("scancode")
+    if binary is None:
+        return None
+    with tempfile.TemporaryDirectory() as tmp:
+        target = Path(tmp) / "LICENSE"
+        target.write_text(text, encoding="utf-8")
+        out = Path(tmp) / "scan.json"
+        cmd = [binary, "--license", "--quiet", "--json", str(out), str(target)]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300.0, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if proc.returncode != 0:
+            return None
+        try:
+            data = json.loads(out.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+    return _scancode_expression(data)
+
+
+def _scancode_expression(data: object) -> str | None:
+    """The first usable ``detected_license_expression_spdx`` in a scancode JSON report."""
+    if not isinstance(data, dict):
+        return None
+    files = cast(dict[str, object], data).get("files")
+    if not isinstance(files, list):
+        return None
+    for file_entry in files:
+        if not isinstance(file_entry, dict):
+            continue
+        expression = cast(dict[str, object], file_entry).get("detected_license_expression_spdx")
+        if isinstance(expression, str) and expression and expression.upper() != "UNKNOWN":
+            return expression
+    return None
 
 
 def _headers() -> dict[str, str]:

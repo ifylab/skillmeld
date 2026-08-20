@@ -182,6 +182,31 @@ def test_dump_evals_writes_the_interchange_shape(tmp_path: Path) -> None:
     assert document.evals[0].id == 1
 
 
+def test_dump_evals_preserves_unique_numeric_ids(tmp_path: Path) -> None:
+    queries = [
+        TriggerQuery(id="q7", text="find me documents", kind="trigger", expected_skill="retriever"),
+        TriggerQuery(id="q2", text="order me a pizza", kind="near-miss", expected_skill=None),
+    ]
+    out = tmp_path / "evals.json"
+    dump_evals(queries, "orchestrator", out)
+    data = json.loads(out.read_text())
+    assert [(case["id"], case["prompt"]) for case in data["evals"]] == [
+        (2, "order me a pizza"),
+        (7, "find me documents"),
+    ]
+
+
+def test_dump_evals_falls_back_when_ids_carry_no_digits(tmp_path: Path) -> None:
+    queries = [
+        TriggerQuery(id="alpha", text="find me documents", kind="trigger", expected_skill="r"),
+        TriggerQuery(id="beta", text="order me a pizza", kind="near-miss", expected_skill=None),
+    ]
+    out = tmp_path / "evals.json"
+    dump_evals(queries, "orchestrator", out)
+    data = json.loads(out.read_text())
+    assert [case["id"] for case in data["evals"]] == [1, 2]
+
+
 # --- history ------------------------------------------------------------------------------
 
 

@@ -1,10 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Scanner adapters: bandit is a hard dependency; semgrep and gitleaks run when installed.
+"""Scanner adapters: bandit is a hard dependency; semgrep, gitleaks, and skillspector run
+when installed.
 
-Adapters only ever add findings — they can escalate a verdict, never relax one. Subprocesses
-run without a shell and under hard timeouts; semgrep uses the pinned config shipped with the
-package (never the remote registry), and every scanner's version lands in the report so
-hosted verdicts stay scanner-versioned. Secret values found by gitleaks are never echoed.
+Adapters only ever add findings — they can escalate a verdict, never relax one, and none of
+them emits CRITICAL: BLOCK stays reserved for the core rules' high-precision hits, so an
+adapter's worst case is REVIEW. Subprocesses run without a shell and under hard timeouts;
+semgrep uses the pinned config shipped with the package (never the remote registry), and
+every scanner's version lands in the report so hosted verdicts stay scanner-versioned.
+Secret values found by gitleaks are never echoed. skillspector always runs ``--no-llm`` so
+scanned content never leaves the machine; its SC4 check may still send dependency *names*
+(never file contents) to OSV.dev, with a bundled fallback list when that host is unreachable.
 """
 
 from __future__ import annotations
@@ -18,7 +23,15 @@ from importlib import metadata
 from pathlib import Path
 
 from skillmeld.models import ScanFinding
-from skillmeld.security.rules import MALICIOUS_CODE, META, SECRET_EXPOSURE, Severity
+from skillmeld.security.rules import (
+    CREDENTIAL_HANDLING,
+    MALICIOUS_CODE,
+    META,
+    PROMPT_INJECTION,
+    SECRET_EXPOSURE,
+    UNVERIFIABLE_DEPENDENCY,
+    Severity,
+)
 
 _TIMEOUT = 120.0
 _SEMGREP_CONFIG = Path(__file__).parent / "configs" / "semgrep.yml"
@@ -32,6 +45,25 @@ _SEMGREP_SEVERITY = {
     "ERROR": Severity.HIGH,
     "WARNING": Severity.MEDIUM,
     "INFO": Severity.LOW,
+}
+# CRITICAL deliberately caps at HIGH: adapter findings are probabilistic, so their worst
+# verdict is REVIEW — only the core rules can BLOCK.
+_SKILLSPECTOR_SEVERITY = {
+    "CRITICAL": Severity.HIGH,
+    "HIGH": Severity.HIGH,
+    "MEDIUM": Severity.MEDIUM,
+    "LOW": Severity.LOW,
+}
+# skillspector's own 17 categories, folded onto the taxonomy the gate reports; anything
+# unmapped (Behavioral AST, YARA Signatures, ...) lands in malicious-code.
+_SKILLSPECTOR_CATEGORY = {
+    "Prompt Injection": PROMPT_INJECTION,
+    "Anti-Refusal": PROMPT_INJECTION,
+    "System Prompt Leakage": PROMPT_INJECTION,
+    "Memory Poisoning": PROMPT_INJECTION,
+    "Trigger Abuse": PROMPT_INJECTION,
+    "Data Exfiltration": CREDENTIAL_HANDLING,
+    "Supply Chain": UNVERIFIABLE_DEPENDENCY,
 }
 
 
@@ -50,6 +82,7 @@ def run_all(bundle: Path, py_files: list[Path]) -> tuple[list[ScanFinding], dict
         versions["semgrep"] = semgrep_version
     else:
         versions["semgrep"] = "absent"
+        findings.append(_coverage_notice("semgrep"))
 
     gitleaks = shutil.which("gitleaks")
     if gitleaks:
@@ -57,8 +90,25 @@ def run_all(bundle: Path, py_files: list[Path]) -> tuple[list[ScanFinding], dict
         versions["gitleaks"] = _gitleaks_version(gitleaks)
     else:
         versions["gitleaks"] = "absent"
+        findings.append(_coverage_notice("gitleaks"))
+
+    skillspector = shutil.which("skillspector")
+    if skillspector:
+        findings.extend(_run_skillspector(skillspector, bundle))
+        versions["skillspector"] = _skillspector_version(skillspector)
+    else:
+        versions["skillspector"] = "absent"
+        findings.append(_coverage_notice("skillspector"))
 
     return findings, versions
+
+
+def _coverage_notice(name: str) -> ScanFinding:
+    """A gate that runs with reduced coverage says so, not just a quiet version entry."""
+    return _notice(
+        f"{name} is not on PATH — this scan ran without its coverage; "
+        f"install it to escalate-only widen the gate"
+    )
 
 
 def _run_bandit(bundle: Path) -> list[ScanFinding]:
@@ -169,6 +219,49 @@ def parse_gitleaks(report_text: str, bundle: Path) -> list[ScanFinding]:
             )
         )
     return findings
+
+
+def _run_skillspector(binary: str, bundle: Path) -> list[ScanFinding]:
+    # --no-llm is non-negotiable: the default mode sends file contents to an LLM provider.
+    cmd = [binary, "scan", str(bundle), "--format", "json", "--no-llm"]
+    output = _run(cmd, "skillspector", ok_codes={0, 1})
+    if isinstance(output, ScanFinding):
+        return [output]
+    return parse_skillspector(output, bundle)
+
+
+def parse_skillspector(output: str, bundle: Path) -> list[ScanFinding]:
+    try:
+        data = json.loads(output)
+    except ValueError:
+        return [_notice("skillspector produced unparseable output")]
+    findings: list[ScanFinding] = []
+    issues = data.get("issues", []) if isinstance(data, dict) else []
+    for issue in issues:
+        category = str(issue.get("category", ""))
+        severity = _SKILLSPECTOR_SEVERITY.get(str(issue.get("severity")), Severity.LOW)
+        location = issue.get("location", {}) or {}
+        confidence = issue.get("confidence")
+        detail = f" ({float(confidence):.0%} confidence)" if confidence is not None else ""
+        findings.append(
+            ScanFinding(
+                rule_id=f"skillspector:{issue.get('id', 'unknown')}",
+                category=_SKILLSPECTOR_CATEGORY.get(category, MALICIOUS_CODE),
+                severity=severity,
+                locus=f"{_rel(str(location.get('file', '')), bundle)}:"
+                f"{location.get('start_line', 0)}",
+                message=str(issue.get("message") or f"{category or 'skillspector'}{detail}"),
+            )
+        )
+    return findings
+
+
+def _skillspector_version(binary: str) -> str:
+    output = _run([binary, "--version"], "skillspector", ok_codes={0})
+    if isinstance(output, ScanFinding):
+        return "unknown"
+    text = output.strip().splitlines()[0] if output.strip() else ""
+    return text.removeprefix("SkillSpector v") or "unknown"
 
 
 def _gitleaks_version(binary: str) -> str:

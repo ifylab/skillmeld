@@ -4,9 +4,50 @@ All notable changes to skillmeld are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-08-19
+
+### Added
+
+- Four core rules close gaps a new taxonomy coverage benchmark surfaced: cron and login/startup
+  persistence, ClickFix-style paste-to-fix lures, and directed false reassurance ("tell the user
+  it is safe"). The benchmark maps every publicly named category of agentskill.sh's threat model
+  to at least one live rule and carries OWASP Agentic Skills Top 10 ids as an advisory
+  cross-reference (the OWASP list is in pre-ratification review, so its ids are never a stored
+  schema key).
+- NVIDIA SkillSpector joins semgrep and gitleaks as a PATH-optional, escalate-only scanner
+  adapter. It always runs `--no-llm` (scanned content never leaves the machine; its supply-chain
+  check may send dependency names — never contents — to OSV.dev, with a bundled fallback), its
+  CRITICAL findings cap at REVIEW like every adapter, and its categories fold onto the gate's
+  taxonomy.
+- The weekly catalog build now consults scancode-toolkit for license texts the lightweight
+  fingerprints cannot identify, so gold-standard SPDX detection is baked into the signed catalog
+  while the client stays dependency-light.
+- `emit marketplace` gained `--marketplace-version` and `--owner-url`. The manifest now matches
+  the shape Claude Code marketplaces ship (a `metadata` wrapper with description + version), and
+  the version also lands on the plugin entry so `claude plugin update` can see a re-composition.
+- The SkillsMP adapter is real: `skillsmp-scout --queries ...` runs authed, budget-capped,
+  paginated breadth discovery over the SkillsMP registry and prints candidate `owner/name`
+  repos ranked by stars. Candidates only — catalog membership stays a hand-curated decision —
+  and the undocumented response schema is pinned by fixture so upstream drift fails loudly.
 
 ### Changed
+
+- A scan that runs without an optional scanner now says so with a visible notice instead of a
+  quiet `absent` version entry; a security gate announces reduced coverage.
+- `scan --license --sources` distinguishes the two license-unknown cases: the catalog also has
+  no SPDX for the source (unknown is the settled state) versus the bundle simply not being in
+  the provided sources.
+- The merge plan's support-file reference warnings collapse into one aggregate line listing
+  every referenced file, so boilerplate cannot drown a real warning.
+- `eval --help` groups shared, run-only, and improve-only flags; `catalog --help` documents the
+  trust model (verification at sync/verify time; `discover` trusts the last verified sync).
+- `eval run --write-evals` keeps the caller's query numbering whenever the ids carry unique
+  digits, instead of always renumbering the exported cases.
+- Quality-gate body warnings cite the line numbers of unescaped html-like tags.
+- Spec refresh: the Skills API is GA (`skills-2025-10-02` and `code-execution-2025-08-25` are
+  optional opt-ins now; `files-api-2025-04-14` is still required when files move), and Claude
+  Code renamed its routing-budget setting to `skillListingMaxDescChars` (same 1536 default) —
+  constants, warning text, and docs updated.
 
 - The quality gate no longer hard-fails a skill whose body carries an unescaped html-like tag;
   the finding surfaces as a warning instead. Hard issues now cover only what the composition

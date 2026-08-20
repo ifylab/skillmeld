@@ -97,11 +97,12 @@ def support_references(body: str) -> list[str]:
 
 def _dangling_reference_warnings(result: MergeResult) -> list[str]:
     skills = [*result.skills, *([result.orchestrator] if result.orchestrator else [])]
-    refs = {ref for skill in skills for ref in support_references(skill.doc.body)}
-    return [
-        f"body references support file {ref!r}; emit carries it when the source bundle has it"
-        for ref in sorted(refs)
-    ]
+    refs = sorted({ref for skill in skills for ref in support_references(skill.doc.body)})
+    if not refs:
+        return []
+    # One aggregate line, not one per file — boilerplate must not drown a real warning.
+    listed = ", ".join(repr(ref) for ref in refs)
+    return [f"bodies reference support files {listed}; emit carries each one the source has"]
 
 
 def reconciled_unresolved(unresolved: list[Conflict]) -> list[str]:

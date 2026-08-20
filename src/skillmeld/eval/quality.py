@@ -85,8 +85,16 @@ def score_quality(doc: SkillDoc) -> QualityReport:
             f"Claude Code routing cap but over the {API_DESCRIPTION_LIMIT}-char API authoring cap, "
             "so the API /v1/skills surface would reject it"
         )
-    if _HTML_TAG.search(_CODE_SPAN.sub(" ", doc.body)):
-        warnings.append("body contains an unescaped html-like tag")
+    stripped = _CODE_SPAN.sub(lambda match: "\n" * match.group().count("\n"), doc.body)
+    tag_lines = [
+        number
+        for number, line in enumerate(stripped.splitlines(), start=1)
+        if _HTML_TAG.search(line)
+    ]
+    if tag_lines:
+        cited = ", ".join(str(number) for number in tag_lines[:5])
+        extra = f" and {len(tag_lines) - 5} more" if len(tag_lines) > 5 else ""
+        warnings.append(f"body contains an unescaped html-like tag (line {cited}{extra})")
     bad_keys = sorted(set(doc.frontmatter) - ALLOWED_FRONTMATTER)
     if bad_keys:
         issues.append(f"unknown frontmatter keys: {', '.join(bad_keys)}")

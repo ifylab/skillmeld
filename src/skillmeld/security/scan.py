@@ -4,7 +4,8 @@
 Pattern matching cannot catch every natural-language injection, so REVIEW plus host-Claude
 judgment is load-bearing: critical findings BLOCK, high/medium findings REVIEW, low/info are
 recorded without gating. Python files go through bandit (AST-based, a hard dependency);
-semgrep and gitleaks add findings when installed — adapters only ever escalate, never relax.
+semgrep, gitleaks, and skillspector add findings when installed — adapters only ever
+escalate, never relax.
 """
 
 from __future__ import annotations

@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass
 from enum import StrEnum
 
-RULESET_VERSION = "2026.06.09"
+RULESET_VERSION = "2026.08.19"
 
 # Snyk ToxicSkills taxonomy.
 PROMPT_INJECTION = "prompt-injection"
@@ -120,6 +120,25 @@ LINE_RULES: tuple[Rule, ...] = (
         r"(?:reveal|print|show|output|repeat)\s+(?:your\s+)?system\s+prompt",
         "Asks the agent to expose its system prompt.",
     ),
+    _rule(
+        "clickfix-lure",
+        PROMPT_INJECTION,
+        Severity.MEDIUM,
+        r"(?:to\s+(?:fix|resolve|verify)\b.{0,60}\bpaste\b|"
+        r"\bpaste\b.{0,60}\bto\s+(?:fix|resolve|verify)\b|"
+        r"press\s+(?:the\s+)?win(?:dows)?(?:\s+key)?\s*\+\s*r\b)",
+        "ClickFix-style lure: paste-a-command-to-fix-or-verify framing.",
+    ),
+    _rule(
+        "false-reassurance",
+        PROMPT_INJECTION,
+        Severity.MEDIUM,
+        r"(?:tell|assure|reassure|convince|inform)\s+the\s+user\s+(?:that\s+)?"
+        r"(?:it|this|that|the)\b(?:\s+\w+){0,2}\s+is\s+"
+        r"(?:completely\s+|perfectly\s+|totally\s+)?"
+        r"(?:safe|harmless|verified|official|trusted|legitimate)",
+        "Directs the agent to vouch safety claims to the user.",
+    ),
     # --- malicious code (shell-level) ---------------------------------------------------
     _rule(
         "reverse-shell",
@@ -189,6 +208,21 @@ LINE_RULES: tuple[Rule, ...] = (
         "npm lifecycle install hook runs code at install time.",
         kinds=frozenset({FileKind.MANIFEST}),
         flags=0,
+    ),
+    _rule(
+        "cron-persistence",
+        MALICIOUS_CODE,
+        Severity.HIGH,
+        r"\|\s*crontab\b|/etc/cron(?:tab\b|\.(?:d|daily|hourly|weekly|monthly)/)|/var/spool/cron",
+        "Installs cron persistence.",
+    ),
+    _rule(
+        "login-persistence",
+        MALICIOUS_CODE,
+        Severity.MEDIUM,
+        r"(?:>>|\btee\s+-a)\s*(?:\"?\$HOME\"?|~)/\.(?:bashrc|zshrc|bash_profile|zprofile|profile)\b|"
+        r"Library/Launch(?:Agents|Daemons)/|\.config/systemd/user/",
+        "Writes login or startup persistence (shell rc, LaunchAgents, systemd user units).",
     ),
     # --- suspicious download ------------------------------------------------------------
     _rule(

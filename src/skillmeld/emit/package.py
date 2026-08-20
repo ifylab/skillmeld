@@ -226,6 +226,7 @@ def emit_marketplace(
     generated_at: str,
     marketplace_name: str,
     owner: dict[str, str],
+    version: str = "0.1.0",
     plugin_name: str | None = None,
     carry: dict[str, list[tuple[str, Path]]] | None = None,
 ) -> list[str]:
@@ -263,6 +264,7 @@ def emit_marketplace(
         result,
         marketplace_name=marketplace_name,
         owner=owner,
+        version=version,
         plugin_name=plugin_name,
         skill_paths=skill_paths,
     )
@@ -280,6 +282,7 @@ def _marketplace_manifest(
     *,
     marketplace_name: str,
     owner: dict[str, str],
+    version: str,
     plugin_name: str | None,
     skill_paths: list[str],
 ) -> dict[str, object]:
@@ -288,8 +291,9 @@ def _marketplace_manifest(
     Plugin name/description come from the primary skill (the orchestrator if present, else the sole
     skill). ``license`` is the engine's combined resolution (``plan.license_resolution``) — one
     unlicensed source resolves the whole set to unknown, so the field is omitted rather than
-    asserting a license the set does not cleanly carry. ``version`` is omitted so the git commit
-    SHA drives updates once the user hosts the marketplace.
+    asserting a license the set does not cleanly carry. ``version`` lands on both the marketplace
+    ``metadata`` and the plugin entry: ``claude plugin update`` compares version strings, so a
+    re-composition must bump it to reach installed users.
     """
     primary = _emitted_skills(result)[0]
     name = plugin_name or default_plugin_name(result)
@@ -305,10 +309,14 @@ def _marketplace_manifest(
     license_id = result.plan.license_resolution.spdx_id
     if license_id:
         entry["license"] = license_id
+    entry["version"] = version
     return {
         "name": marketplace_name,
         "owner": owner,
-        "description": "Composed by skillmeld from existing community skills.",
+        "metadata": {
+            "description": "Composed by skillmeld from existing community skills.",
+            "version": version,
+        },
         "plugins": [entry],
     }
 
@@ -375,7 +383,7 @@ def routing_truncation_warnings(result: MergeResult) -> list[str]:
     """Descriptions over the Claude Code routing cap, which get truncated in the skill listing.
 
     Claude Code shows ``description`` + ``when_to_use`` combined and truncates past
-    ``maxSkillDescriptionChars`` (1536). skillmeld emits no ``when_to_use``, so the description
+    ``skillListingMaxDescChars`` (1536). skillmeld emits no ``when_to_use``, so the description
     alone is budgeted; past the cap Claude drops the tail — the keywords that make the skill
     trigger — with no error. The Claude Code tree and the claude.ai zip both feed that listing, so
     surface it before install rather than let routing signal vanish silently.
@@ -387,7 +395,7 @@ def routing_truncation_warnings(result: MergeResult) -> list[str]:
         if chars > CLAUDE_CODE_ROUTING_LIMIT:
             warnings.append(
                 f"{name}: description is {chars} chars; Claude Code truncates the routing text at "
-                f"{CLAUDE_CODE_ROUTING_LIMIT} (maxSkillDescriptionChars), dropping the last "
+                f"{CLAUDE_CODE_ROUTING_LIMIT} (skillListingMaxDescChars), dropping the last "
                 f"{chars - CLAUDE_CODE_ROUTING_LIMIT} — lead with the key use case to keep it"
             )
     return warnings

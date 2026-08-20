@@ -158,6 +158,7 @@ def test_dangling_reference_warning_flags_support_paths() -> None:
         )
     )
     warnings = _dangling_reference_warnings(MergeResult(skills=[skill]))
-    assert any("references/guide.md" in warning for warning in warnings)
-    assert any("resources/data.jsonl" in warning for warning in warnings)
-    assert not any("ok.com" in warning for warning in warnings)  # URL path is not a local file
+    assert len(warnings) == 1  # aggregate line, never one per file
+    assert "references/guide.md" in warnings[0]
+    assert "resources/data.jsonl" in warnings[0]
+    assert "ok.com" not in warnings[0]  # URL path is not a local file

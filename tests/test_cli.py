@@ -200,6 +200,65 @@ def test_scan_sources_trusts_catalog_license(
     assert not any(f["rule_id"] == "core:license-unknown" for f in with_src["findings"])
 
 
+def _license_unknown_messages(out: dict) -> list[str]:
+    return [f["message"] for f in out["findings"] if f["rule_id"] == "core:license-unknown"]
+
+
+def test_scan_sources_says_when_the_catalog_also_lacks_a_license(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from skillmeld.models import Candidate, CatalogEntry, LicenseInfo, SkillFile, SkillSource
+    from skillmeld.security.verdict import dir_bundle_hash
+
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "SKILL.md").write_text("---\nname: x\ndescription: d\n---\n# X\n\nDo a thing.\n")
+    entry = CatalogEntry(
+        id="x/s:x",
+        source=SkillSource(name="x", repo="x/s", license=LicenseInfo(spdx_id=None)),
+        files=[SkillFile(path="SKILL.md", sha256="0" * 64)],
+        bundle_hash=dir_bundle_hash(bundle),
+        fetch_base="https://example/x",
+    )
+    disc = tmp_path / "discover.json"
+    disc.write_text(
+        json.dumps({"candidates": [Candidate(entry=entry, score=1.0, matched=[]).model_dump()]})
+    )
+
+    main(["scan", str(bundle), "--license", "--sources", str(disc)])
+    out = json.loads(capsys.readouterr().out)
+    messages = _license_unknown_messages(out)
+    assert messages and all("settled state" in message for message in messages)
+
+
+def test_scan_sources_says_when_the_bundle_is_not_in_them(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from skillmeld.models import Candidate, CatalogEntry, LicenseInfo, SkillFile, SkillSource
+
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "SKILL.md").write_text("---\nname: x\ndescription: d\n---\n# X\n\nDo a thing.\n")
+    entry = CatalogEntry(
+        id="x/s:x",
+        source=SkillSource(
+            name="x", repo="x/s", license=LicenseInfo(spdx_id="MIT", source="license-file")
+        ),
+        files=[SkillFile(path="SKILL.md", sha256="0" * 64)],
+        bundle_hash="1" * 64,
+        fetch_base="https://example/x",
+    )
+    disc = tmp_path / "discover.json"
+    disc.write_text(
+        json.dumps({"candidates": [Candidate(entry=entry, score=1.0, matched=[]).model_dump()]})
+    )
+
+    main(["scan", str(bundle), "--license", "--sources", str(disc)])
+    out = json.loads(capsys.readouterr().out)
+    messages = _license_unknown_messages(out)
+    assert messages and all("not in the provided sources" in message for message in messages)
+
+
 def _marketplace_inputs(tmp_path: Path) -> tuple[Path, Path]:
     from skillmeld.models import AssembledSkill, MergeResult, SkillDoc, SkillSource
 
@@ -240,7 +299,40 @@ def test_emit_marketplace_defaults_owner_and_warns(
     assert payload["surface"] == "marketplace"
     assert any("owner name defaulted" in w for w in payload["warnings"])
     assert any("marketplace name defaulted" in w for w in payload["warnings"])
+    assert any("marketplace version defaulted" in w for w in payload["warnings"])
     assert (out / ".claude-plugin" / "marketplace.json").is_file()
+
+
+def test_emit_marketplace_version_and_owner_url_flow_through(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bundle, result_path = _marketplace_inputs(tmp_path)
+    out = tmp_path / "mp"
+    code = main(
+        [
+            "emit",
+            "marketplace",
+            "--result",
+            str(result_path),
+            "--bundles",
+            str(bundle),
+            "--out",
+            str(out),
+            "--marketplace-version",
+            "1.2.0",
+            "--owner-name",
+            "me",
+            "--owner-url",
+            "https://example.com/me",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert not any("marketplace version defaulted" in w for w in payload["warnings"])
+    manifest = json.loads((out / ".claude-plugin" / "marketplace.json").read_text())
+    assert manifest["metadata"]["version"] == "1.2.0"
+    assert manifest["plugins"][0]["version"] == "1.2.0"
+    assert manifest["owner"] == {"name": "me", "url": "https://example.com/me"}
     assert not list(out.rglob("plugin.json"))
 
 

@@ -118,6 +118,7 @@ def test_quality_allows_code_operators_but_warns_html_tags() -> None:
     )
     report = score_quality(tagged)
     assert any("html-like tag" in warning for warning in report.warnings)
+    assert any("(line 3" in warning for warning in report.warnings)  # cite where, not just what
     assert not report.issues
     assert report.passed
 

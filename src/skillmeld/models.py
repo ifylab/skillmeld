@@ -8,20 +8,23 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-# Routing-surface character budgets for a skill's description (verified 2026-06-23):
+# Routing-surface character budgets for a skill's description (re-verified 2026-08-19):
 #   - Claude API /v1/skills: `description` max 1024 chars (authoring cap; longer is rejected).
 #   - Claude Code skill listing: `description` + `when_to_use` combined, truncated past 1536
-#     (`maxSkillDescriptionChars`, default since Claude Code v2.1.105).
+#     (`skillListingMaxDescChars`, renamed from `maxSkillDescriptionChars`; same 1536 default).
+#     A sibling setting, `skillListingBudgetFraction` (default 0.01), now budgets the whole
+#     listing at 1% of the model's context window — the per-skill cap is unchanged.
 # skillmeld emits no `when_to_use`, so the description alone is what gets budgeted on each surface.
 # These track an evolving spec; re-verify before relying on them: the format spec lives at
 # https://agentskills.io/specification, the Claude Code surface at https://code.claude.com/docs/en/skills.
 API_DESCRIPTION_LIMIT = 1024
 CLAUDE_CODE_ROUTING_LIMIT = 1536
 
-# Skills API beta headers, pinned (verified 2026-07-26 against
-# https://platform.claude.com/docs/en/build-with-claude/skills-guide). Code execution and
-# skills are always required; the files-api header matters only when the Files API moves
-# files in or out of the container. Beta identifiers get superseded — re-verify on failure.
+# Skills API headers (re-verified 2026-08-19 against
+# https://platform.claude.com/docs/en/build-with-claude/skills-guide). Skills are GA: the
+# code-execution and skills identifiers are optional now but remain valid opt-ins, so sending
+# them keeps older examples working; the files-api header is still required whenever the Files
+# API moves files in or out of the container. Identifiers get superseded — re-verify on failure.
 SKILLS_API_BETA_HEADERS = (
     "code-execution-2025-08-25",
     "skills-2025-10-02",
