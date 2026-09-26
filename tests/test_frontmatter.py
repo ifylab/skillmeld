@@ -112,6 +112,37 @@ def test_split_frontmatter_parses_nested_metadata_and_tolerates_colons() -> None
     assert body == "# Body\n"
 
 
+def test_split_frontmatter_folds_block_scalar_descriptions() -> None:
+    folded = "---\nname: x\ndescription: >\n  Reviews a week of\n  production metrics.\n---\nbody\n"
+    literal = "---\nname: x\ndescription: |-\n  line one\n  line two\n---\nbody\n"
+    assert _split_frontmatter(folded)[0]["description"] == "Reviews a week of production metrics."
+    assert _split_frontmatter(literal)[0]["description"] == "line one\nline two"
+
+
+def test_split_frontmatter_folds_quoted_and_plain_continuations() -> None:
+    quoted = (
+        "---\nname: x\n"
+        'description: "Starts on one line\n  and continues: with a colon."\n'
+        "tags: [a, b]\n---\nbody\n"
+    )
+    plain = (
+        "---\nname: x\ndescription:\n  Plain prose under the key,\n  wrapped twice.\n---\nbody\n"
+    )
+    frontmatter, _ = _split_frontmatter(quoted)
+    assert frontmatter["description"] == "Starts on one line and continues: with a colon."
+    assert frontmatter["tags"] == "[a, b]"
+    assert (
+        _split_frontmatter(plain)[0]["description"] == "Plain prose under the key, wrapped twice."
+    )
+
+
+def test_split_frontmatter_malformed_block_scalar_degrades_to_empty() -> None:
+    text = "---\nname: x\ndescription: |\n  ok\n unindented: [\n---\nbody\n"
+    frontmatter, _ = _split_frontmatter(text)
+    assert frontmatter["name"] == "x"
+    assert frontmatter["description"] == ""
+
+
 def test_split_frontmatter_safe_load_refuses_python_tag() -> None:
     text = (
         "---\n"
@@ -210,6 +241,42 @@ def test_render_skill_md_includes_carried_fields() -> None:
     assert "allowed-tools: Read" in text
     assert "disable-model-invocation: true" in text
     assert "metadata:\n  author: org" in text
+
+
+def test_spec_only_render_drops_claude_code_fields_and_names_them() -> None:
+    import io
+    import zipfile
+
+    from skillmeld.emit.package import emit_claudeai_zip
+
+    doc = SkillDoc(
+        source=SkillSource(name="x"),
+        frontmatter={
+            "name": "x",
+            "description": "d",
+            "allowed-tools": "Read",
+            "disallowed-tools": "Bash",
+            "disable-model-invocation": True,
+            "metadata": {"author": "org"},
+        },
+        body="# X\n",
+    )
+    full = render_skill_md(doc)
+    spec = render_skill_md(doc, spec_only=True)
+    assert "disallowed-tools: Bash" in full and "disable-model-invocation: true" in full
+    assert "disallowed-tools" not in spec and "disable-model-invocation" not in spec
+    assert "allowed-tools: Read" in spec and "metadata:\n  author: org" in spec
+    result = MergeResult(skills=[AssembledSkill(doc=doc)])
+    warnings = api_surface_warnings(result)
+    assert warnings == [
+        "x: disallowed-tools, disable-model-invocation left out of this surface (outside the Agent "
+        "Skills spec, the upload refuses them; the claude-code and marketplace emits keep them) "
+        "— the surface does not enforce tool or invocation frontmatter"
+    ]
+    archive = zipfile.ZipFile(
+        io.BytesIO(emit_claudeai_zip(result, sources=[doc], generated_at="2026-09-26T00:00:00Z"))
+    )
+    assert "disallowed-tools" not in archive.read("skills/x/SKILL.md").decode()
 
 
 def test_api_surface_warns_on_tool_frontmatter() -> None:

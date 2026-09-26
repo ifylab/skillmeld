@@ -477,6 +477,16 @@ def _cmd_skillsmp_scout(queries: list[str], limit: int) -> int:
     return _emit(report)
 
 
+def _cmd_awesome_scout(url: str | None, limit: int, lookups: int) -> int:
+    from skillmeld.registries.awesome import DEFAULT_LIST, AwesomeScoutError, scout
+
+    try:
+        report = scout(url or DEFAULT_LIST, limit=limit, lookups=lookups)
+    except AwesomeScoutError as exc:
+        return _error(str(exc))
+    return _emit(report)
+
+
 def _cmd_build_catalog(args: argparse.Namespace) -> int:
     from datetime import UTC, datetime
 
@@ -537,7 +547,7 @@ def _cmd_emit(args: argparse.Namespace) -> int:
         routing_truncation_warnings,
     )
     from skillmeld.emit.provenance import build_provenance
-    from skillmeld.models import SKILLS_API_BETA_HEADERS, Verdict
+    from skillmeld.models import SKILLS_API_BETA_HEADERS, SKILLS_API_LEGACY_BETA_HEADERS, Verdict
 
     try:
         result = _load_merge_result(args.result)
@@ -573,6 +583,7 @@ def _cmd_emit(args: argparse.Namespace) -> int:
                 "surface": "api",
                 "skills": emit_api_payload(result),
                 "beta_headers": list(SKILLS_API_BETA_HEADERS),
+                "legacy_beta_headers": list(SKILLS_API_LEGACY_BETA_HEADERS),
                 "provenance_md": provenance,
                 "requires_confirmation": requires_confirmation,
                 "warnings": warnings,
@@ -588,7 +599,12 @@ def _cmd_emit(args: argparse.Namespace) -> int:
         data = emit_claudeai_zip(result, sources=sources, generated_at=generated_at, carry=carry)
         Path(out).write_bytes(data)
         return _emit(
-            {"surface": "claudeai", "zip": out, "bytes": len(data), "warnings": routing_warnings}
+            {
+                "surface": "claudeai",
+                "zip": out,
+                "bytes": len(data),
+                "warnings": routing_warnings + api_surface_warnings(result),
+            }
         )
     if args.surface == "marketplace":
         from skillmeld.merge.synthesize import slug
@@ -724,7 +740,26 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     scout.add_argument("--queries", nargs="+", required=True, help="Search terms, one scout each.")
-    scout.add_argument("--limit", type=int, default=100, help="Max hits per query (page cap 100).")
+    scout.add_argument("--limit", type=int, default=100, help="Max hits per query (page cap 50).")
+
+    awesome = sub.add_parser(
+        "awesome-scout",
+        help="Scout a curated awesome-list for candidate repos to curate into the catalog sources.",
+        description=(
+            "Breadth discovery over a curated list's README (default: VoltAgent/awesome-agent-"
+            "skills): every github.com/owner/name link, minus repos the catalog already has, "
+            "ranked by stars via the GitHub API. Prints candidates only — membership in "
+            "hosted/sources.py stays a deliberate decision. Set GITHUB_TOKEN for more lookups."
+        ),
+    )
+    awesome.add_argument("--url", help="Raw README URL of the list (default: the VoltAgent list).")
+    awesome.add_argument("--limit", type=int, default=50, help="Max candidates to print.")
+    awesome.add_argument(
+        "--lookups",
+        type=int,
+        default=60,
+        help="Max GitHub API star lookups (60/h unauthenticated).",
+    )
 
     intake = sub.add_parser("intake", help="Normalize a use case and flag if it is too thin.")
     intake.add_argument("use_case")
@@ -872,6 +907,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_build_catalog(args)
     if command == "skillsmp-scout":
         return _cmd_skillsmp_scout(args.queries, args.limit)
+    if command == "awesome-scout":
+        return _cmd_awesome_scout(args.url, args.limit, args.lookups)
     if command == "discover":
         return _cmd_discover(args.profile, args.catalog, args.limit)
     if command == "select":

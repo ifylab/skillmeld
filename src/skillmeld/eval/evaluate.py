@@ -34,10 +34,12 @@ class EvalReport(BaseModel):
 class EditDecision(BaseModel):
     accepted: bool = False
     reasons: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
     before_held_out: float = 0.0
     after_held_out: float = 0.0
     before_independent: float = 0.0
     after_independent: float = 0.0
+    leaky_ids: list[str] = Field(default_factory=list)
 
 
 def evaluate(
@@ -100,8 +102,10 @@ def apply_description_edit(
     _, held_out_ids = split(queries)
     gate = STRATEGIES[strategy].gate(result, after, sources, queries, held_out_ids)
 
-    before = score_trigger(queries, baseline_judgments).held_out_pass_rate
-    candidate = score_trigger(queries, candidate_judgments).held_out_pass_rate
+    before_score = score_trigger(queries, baseline_judgments)
+    candidate_score = score_trigger(queries, candidate_judgments)
+    before = before_score.held_out_pass_rate
+    candidate = candidate_score.held_out_pass_rate
     regressed = candidate < before
 
     # Independent cross-check: route the held-out queries against the descriptions themselves,
@@ -119,13 +123,24 @@ def apply_description_edit(
             "the edited description routes the held-out queries worse on its own terms"
         )
     accepted = gate.passed and not regressed and not independent_regressed
+    warnings: list[str] = []
+    leaky_held_out = sorted(set(before_score.leaky_ids) & set(held_out_ids))
+    if leaky_held_out:
+        warnings.append(
+            f"{len(leaky_held_out)} held-out queries spell out their target skill's name "
+            f"({', '.join(leaky_held_out)}), so they route trivially; without them the held-out "
+            f"pass-rate is {before_score.held_out_pass_rate_strict} -> "
+            f"{candidate_score.held_out_pass_rate_strict}. Rewrite them as a user would ask."
+        )
     decision = EditDecision(
         accepted=accepted,
         reasons=reasons,
+        warnings=warnings,
         before_held_out=before,
         after_held_out=candidate,
         before_independent=before_independent,
         after_independent=after_independent,
+        leaky_ids=before_score.leaky_ids,
     )
     return (after if accepted else result), decision
 

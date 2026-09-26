@@ -46,7 +46,8 @@ Each command prints JSON to stdout. This skill reads that JSON and supplies the 
 4. Rank + select — rank the candidates by fit to the use case. Read each candidate's name,
    description, tags, and `matched` evidence; ignore `files`. Answer with existing candidate
    ids only — never invent an id — best first, at most three. Then
-   `run.sh select --candidates <discover.json> --choose id1,id2` validates the pick and
+   `run.sh select --candidates <discover.json> --choose id1,id2` (ids exactly as discover printed
+   them, `owner/repo:path`) validates the pick and
    surfaces warnings (for example, two picks from the same source repo).
 5. Fetch — `run.sh fetch --selection <select.json>` downloads only the chosen bundles and
    verifies every file against the hash the signed catalog pinned; a mismatch refuses the
@@ -55,9 +56,12 @@ Each command prints JSON to stdout. This skill reads that JSON and supplies the 
    runs, so globbing the bundles directory will pull in other selections' skills. Map each path
    by the `id` fetch reports next to it, never by directory order.
 6. Security gate — `run.sh scan <bundle> [--sources <discover.json>]` for each: PASS proceeds,
-   REVIEW is surfaced for a decision, BLOCK is refused. Pass `--sources` so a skill whose repo
-   license the catalog already knows is not flagged license-unknown just because the LICENSE file
-   stayed out of the bundle.
+   REVIEW is surfaced for a decision, BLOCK is refused. REVIEW is the usual verdict for a popular
+   skill that calls the network or reads files, not a defect: read the named findings, decide,
+   and record the decision in the review card. Every scan also names the executable scripts a
+   bundle ships (`core:ships-scripts`, informational) so the card can say what will run. Pass
+   `--sources` so a skill whose repo license the catalog already knows is not flagged
+   license-unknown just because the LICENSE file stayed out of the bundle.
 7. Merge — `run.sh merge --bundles <dir>... --profile <profile.json>` runs the eight-step
    engine: parse, dedupe, group, conflict-detect, reconcile, prune, partition, and verify. You
    supply the judgment the engine asks for and nothing more:
@@ -80,7 +84,8 @@ Each command prints JSON to stdout. This skill reads that JSON and supplies the 
    purpose (it never invents text), so each one must be authored before it can ship; a skill
    with no description never triggers in Claude Code. For each child, write a short, trigger-
    friendly description and gate it through
-   `run.sh eval improve --skill <index|orchestrator> --description "..."` with the trigger
+   `run.sh eval improve --result <merge.json> --bundles <dir>... --skill <index|orchestrator>
+   --description "..."` with the trigger
    queries and routing judgments (`--queries`, `--baseline-judgments`, and
    `--candidate-judgments` are all required) — an edit is accepted only if structural quality holds, no
    held-out query leaks, and the held-out routing pass-rate does not regress — measured both from
@@ -88,16 +93,23 @@ Each command prints JSON to stdout. This skill reads that JSON and supplies the 
    the descriptions, so acceptance never rests on your self-report. Phrase each description with
    the literal words a user would say; the independent router keys on them. Keep it
    within the routing budget — Claude Code truncates the description at 1536 characters in its skill
-   listing and the API surface caps it at 1024, so lead with the key use case. The orchestrator
+   listing (`skillListingMaxDescChars`; the whole listing shares 1% of the context window unless
+   `skillListingBudgetFraction` raises it) and the API surface caps it at 1024, so lead with the
+   key use case. The orchestrator
    ships with a templated routing description already; refine it the same way (`--skill
    orchestrator`) only if needed. Pass `--sources <discover.json>` to `eval improve` and `eval run`
    (the same JSON you gave merge) so the verifier resolves each source's catalog identity — without
-   it, a source whose `SKILL.md` omits `name:` fails the byte-trace check. Then `run.sh eval run`
-   must report `passed: true` over the set — pass it `--judgments` along with `--queries`: the
+   it, a source whose `SKILL.md` omits `name:` fails the byte-trace check. Then
+   `run.sh eval run --result <merge.json> --bundles <dir>...` must report `passed: true` over the
+   set — pass it `--judgments` along with `--queries`: the
    reported-routing gate scores zero without your judgments even when `independent_trigger` is
    perfect. Quality `warnings` never block `passed`; relay them in the review below. A body
    warning (an unescaped html-like tag inherited from a source) has no in-engine fix — bodies are
-   byte-traced from sources — so do not spend improve rounds trying to clear it.
+   byte-traced from sources — so do not spend improve rounds trying to clear it. Both commands
+   list `leaky_ids`: trigger queries that spell out their target skill's compound name ("ifc
+   quantity takeoff" for `ifc-quantity-takeoff`) route trivially and inflate the pass-rate, so
+   rewrite them the way a user would ask and read `held_out_pass_rate_strict` for the rate
+   without them; `eval improve` repeats the warning in `warnings`.
    Optional interchange: `eval improve --history <path>` keeps a portable `history.json` ledger of
    the accepted and rejected edits, and `eval run --write-evals <path>` exports the query set as a
    portable `evals.json` (both skill-creator formats). When a fetched source bundles its own evals
@@ -106,18 +118,21 @@ Each command prints JSON to stdout. This skill reads that JSON and supplies the 
    selection stay on your own queries.
    With the set now complete, show the user the plan and the authored descriptions as one
    consolidated review before writing anything.
-9. Emit — `run.sh emit <surface>` packages the result; install only after the user approves. Emit
+9. Emit — `run.sh emit <surface> --result <merge.json> --bundles <dir>...` packages the result;
+   install only after the user approves. Emit
    refuses any skill (child or orchestrator) whose description is still empty, so a set can never
    ship dead even if this step was rushed. Surfaces: `claude-code` (skills tree), `claudeai` (zip),
    `api` (`/v1/skills` payload), and `marketplace` (a `strict:false` Claude Code plugin marketplace
    the user can host and `/plugin marketplace add`). Each returns `warnings` to relay before install:
    `emit claude-code`, `emit claudeai`, and `emit marketplace` flag any description over the
    1536-char Claude Code routing cap (truncated in the skill listing, so routing keywords are lost);
-   `emit api` flags a description over the 1024-char `/v1/skills` cap (the upload is rejected), plus
-   any tool or invocation frontmatter that surface does not enforce. Its output also carries the
-   `anthropic-beta` headers to send (`beta_headers`; Skills are GA so the skills and
-   code-execution identifiers are optional opt-ins, but the files-api one is still required when
-   the Files API moves files), the provenance text to keep with the upload (`provenance_md`), and a
+   `emit api` flags a description over the 1024-char `/v1/skills` cap (the upload is rejected), and
+   both `emit api` and `emit claudeai` name any `disallowed-tools` or `disable-model-invocation`
+   they left out — those fields sit outside the Agent Skills spec and an upload refuses a SKILL.md
+   that carries them (the claude-code and marketplace emits keep them); `allowed-tools` stays, but
+   neither surface enforces it. `emit api` also reports that no `anthropic-beta` header is required
+   (`beta_headers` is empty; `legacy_beta_headers` lists the two identifiers older clients may
+   still send), the provenance text to keep with the upload (`provenance_md`), and a
    standing warning that a `/v1/skills` upload is workspace-wide — every member of the workspace can
    invoke it. When the output says `requires_confirmation: true`, or any scan in the run came back
    REVIEW, name the finding and get the user's explicit confirmation before uploading.
@@ -143,7 +158,8 @@ Two human stops on the happy path; everything else streams as narrated progress.
   - what is kept, with per-part provenance (which source each part came from) and licenses;
   - what was deduped or dropped, and why (name the decision, not just the outcome);
   - the consolidated security verdict, with any REVIEW finding named for the exact skill and
-    line (`pdf-helper reads ~/.aws/credentials, line 34`), not boilerplate;
+    line (`pdf-helper reads ~/.aws/credentials, line 34`), not boilerplate, and the scripts each
+    bundle ships;
   - any frontmatter REVIEW from `plan.frontmatter_findings` (a source's pre-approved tool dropped
     in the intersection, or a child left non-invocable), named for the skill it affects;
   - the license resolution and a coarse confidence band.
@@ -158,11 +174,11 @@ Two human stops on the happy path; everything else streams as narrated progress.
   REVIEW prompts stay trusted.
 - **Close by making the user smarter, not just handing over an artifact:** one line on why each
   skill was picked, the 2-3 bullet "what was merged and why" reflection, and a pointer to
-  `PROVENANCE.md` and the sources. Everything deep (full findings, per-line evidence, raw
+  the provenance file and the sources. Everything deep (full findings, per-line evidence, raw
   scores) lives behind "show details".
 
-A non-interactive escape (`--yes` / `--all`, when wired) may skip the REVIEW prompt for CI, but
-never bypasses a BLOCK.
+A non-interactive escape for CI (`--yes` / `--all`) is not built yet; when it is, it may skip the
+REVIEW prompt but will never bypass a BLOCK.
 
 ## Data contracts
 

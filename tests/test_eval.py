@@ -160,6 +160,40 @@ def test_trigger_score_penalizes_misroute_and_false_trigger() -> None:
     assert "q1" in score.failed_ids and "q4" in score.failed_ids
 
 
+def test_trigger_score_flags_queries_that_spell_out_a_compound_name() -> None:
+    queries = [
+        TriggerQuery(id=f"q{n}", text=text, kind="trigger", expected_skill="ifc-quantity-takeoff")
+        for n, text in enumerate(
+            [
+                "use ifc-quantity-takeoff on this model",
+                "run the ifc quantity takeoff skill",
+                "how many cubic metres of concrete are in this IFC model",
+                "give me a bill of quantities from the architect's model",
+                "quantity takeoff please",
+            ]
+        )
+    ]
+    judgments = [
+        TriggerJudgment(query_id=q.id, routed_skill="ifc-quantity-takeoff") for q in queries
+    ]
+    score = score_trigger(queries, judgments)
+    assert score.leaky_ids == ["q0", "q1"]
+    assert score.pass_rate == 1.0
+    held_out = set(score.held_out_ids)
+    strict = [q.id for q in queries if q.id in held_out and q.id not in {"q0", "q1"}]
+    assert score.held_out_pass_rate_strict == (1.0 if strict else 0.0)
+
+
+def test_single_word_skill_names_are_never_leaky() -> None:
+    queries = [
+        TriggerQuery(
+            id="q1", text="extract tables from a pdf", kind="trigger", expected_skill="pdf"
+        )
+    ]
+    score = score_trigger(queries, [TriggerJudgment(query_id="q1", routed_skill="pdf")])
+    assert score.leaky_ids == []
+
+
 # --- leakage ----------------------------------------------------------------------------
 
 

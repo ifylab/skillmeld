@@ -168,6 +168,38 @@ def test_external_url_in_docs_is_info_only(tmp_path: Path) -> None:
     assert "core:external-url" in _rule_ids(report.findings)
 
 
+def test_repeated_host_collapses_to_one_finding(tmp_path: Path) -> None:
+    bundle = _bundle(
+        tmp_path,
+        {
+            "SKILL.md": "Assets at https://cdn.example.net/a.png\n",
+            "one.md": "More at https://cdn.example.net/b.png and https://other.example.net/x\n",
+            "two.md": "And https://cdn.example.net/c.png\n",
+        },
+    )
+    report = scan_bundle(bundle, deep=False)
+    hosts = [f for f in report.findings if f.rule_id == "core:external-url"]
+    assert [f.message for f in hosts] == [
+        "References host outside the allowlist: cdn.example.net (3 places)",
+        "References host outside the allowlist: other.example.net",
+    ]
+    assert hosts[0].locus == "SKILL.md:1"
+
+
+def test_bundled_scripts_are_named_as_info(tmp_path: Path) -> None:
+    with_scripts = _bundle(
+        tmp_path / "a",
+        {"SKILL.md": "Run the helper.\n", "tool.py": "print('hi')\n", "setup.sh": "echo hi\n"},
+    )
+    docs_only = _bundle(tmp_path / "b", {"SKILL.md": "Just prose.\n"})
+    report = scan_bundle(with_scripts, deep=False)
+    info = [f for f in report.findings if f.rule_id == "core:ships-scripts"]
+    assert len(info) == 1
+    assert info[0].message.startswith("Ships 2 executable script file(s): setup.sh, tool.py.")
+    assert report.verdict is Verdict.PASS
+    assert "core:ships-scripts" not in _rule_ids(scan_bundle(docs_only, deep=False).findings)
+
+
 def test_allowed_domain_is_not_flagged(tmp_path: Path) -> None:
     bundle = _bundle(
         tmp_path,

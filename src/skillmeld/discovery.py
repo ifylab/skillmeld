@@ -189,7 +189,11 @@ def _norm(value: str) -> str:
 
 
 def tokenize(text: str) -> set[str]:
-    """Lowercase word tokens, stopwords removed; the shared tokenizer for token matching."""
+    """Lowercase word tokens, stopwords removed; the shared tokenizer for token matching.
+
+    A hyphenated token also yields its parts, so a skill named ``weekly-production-review`` is
+    reachable from "weekly review" and not only from the exact compound.
+    """
     found: set[str] = set()
     for raw in _TOKEN.findall(text.lower()):
         token = raw.strip(".-")
@@ -197,4 +201,9 @@ def tokenize(text: str) -> set[str]:
             continue
         if len(token) >= 3 or "#" in token or "+" in token:
             found.add(token)
+        if "-" in token:
+            for part in token.split("-"):
+                part = part.strip(".")
+                if len(part) >= 3 and part not in _STOPWORDS:
+                    found.add(part)
     return found

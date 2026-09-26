@@ -10,6 +10,7 @@ correctly routes nowhere.
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -38,6 +39,10 @@ class TriggerScore(BaseModel):
     train_ids: list[str] = Field(default_factory=list)
     held_out_ids: list[str] = Field(default_factory=list)
     failed_ids: list[str] = Field(default_factory=list)
+    # Queries that spell out their target skill's compound name route trivially; they are scored
+    # like any other, listed here, and left out of ``held_out_pass_rate_strict``.
+    leaky_ids: list[str] = Field(default_factory=list)
+    held_out_pass_rate_strict: float = 0.0
 
 
 def split(
@@ -66,14 +71,22 @@ def score_trigger(queries: list[TriggerQuery], judgments: list[TriggerJudgment])
     held_out_set = set(held_out_ids)
 
     failed: list[str] = []
+    leaky: list[str] = []
     train_pass = train_total = held_pass = held_total = 0
+    strict_pass = strict_total = 0
     for query in queries:
         ok = _passes(query, routed.get(query.id))
         if not ok:
             failed.append(query.id)
+        names_target = _names_target(query)
+        if names_target:
+            leaky.append(query.id)
         if query.id in held_out_set:
             held_total += 1
             held_pass += int(ok)
+            if not names_target:
+                strict_total += 1
+                strict_pass += int(ok)
         else:
             train_total += 1
             train_pass += int(ok)
@@ -88,7 +101,24 @@ def score_trigger(queries: list[TriggerQuery], judgments: list[TriggerJudgment])
         train_ids=train_ids,
         held_out_ids=held_out_ids,
         failed_ids=sorted(failed),
+        leaky_ids=sorted(leaky),
+        held_out_pass_rate_strict=_ratio(strict_pass, strict_total),
     )
+
+
+def _names_target(query: TriggerQuery) -> bool:
+    """True when a trigger query spells out its expected skill's compound name as a phrase.
+
+    ``ifc-quantity-takeoff`` written as "ifc quantity takeoff" (or hyphenated) inside the query
+    hands the router the answer. A single-word name is the topic itself, never counted as a leak.
+    """
+    if query.kind != "trigger" or not query.expected_skill:
+        return False
+    parts = [part for part in re.split(r"[-_\s]+", query.expected_skill.lower()) if part]
+    if len(parts) < 2:
+        return False
+    phrase = r"\b" + r"[-_\s]+".join(re.escape(part) for part in parts) + r"\b"
+    return re.search(phrase, query.text.lower()) is not None
 
 
 def _passes(query: TriggerQuery, routed_skill: str | None) -> bool:

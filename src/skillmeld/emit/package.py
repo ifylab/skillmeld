@@ -27,12 +27,17 @@ from skillmeld.models import (
     SkillDoc,
 )
 
+# Frontmatter the Agent Skills spec allows. Claude Code reads its own wider dialect and ignores
+# unknown fields; a claude.ai upload, the Skills API and package_skill.py refuse anything else.
+SPEC_ONLY_DROPPED = ("disallowed-tools", "disable-model-invocation")
 
-def render_skill_md(doc: SkillDoc) -> str:
+
+def render_skill_md(doc: SkillDoc, *, spec_only: bool = False) -> str:
     """Render a SKILL.md: frontmatter then the verbatim body (never rewritten here).
 
     Frontmatter order is fixed: name, description, license, then the carried source fields
     (compatibility, allowed-tools, disallowed-tools, disable-model-invocation, metadata).
+    ``spec_only`` leaves out the two Claude-Code-only fields for the surfaces that refuse them.
     """
     name = str(doc.frontmatter.get("name", doc.source.name))
     description = str(doc.frontmatter.get("description", ""))
@@ -42,20 +47,29 @@ def render_skill_md(doc: SkillDoc) -> str:
         front += f"description: {description}\n"
     if license_id:
         front += f"license: {license_id}\n"
-    front += _render_carried(doc.frontmatter)
+    front += _render_carried(doc.frontmatter, spec_only=spec_only)
     front += "---\n"
     body = doc.body if doc.body.startswith("\n") else "\n" + doc.body
     return front + body
 
 
-def _render_carried(frontmatter: dict[str, object]) -> str:
+def _render_carried(frontmatter: dict[str, object], *, spec_only: bool = False) -> str:
     """Render the carried frontmatter fields in a fixed order, deterministically."""
     lines: list[str] = []
-    for field in ("compatibility", "allowed-tools", "disallowed-tools"):
+    fields = (
+        ("compatibility", "allowed-tools")
+        if spec_only
+        else (
+            "compatibility",
+            "allowed-tools",
+            "disallowed-tools",
+        )
+    )
+    for field in fields:
         value = str(frontmatter.get(field, "")).strip()
         if value:
             lines.append(f"{field}: {value}")
-    if frontmatter.get("disable-model-invocation") is True:
+    if not spec_only and frontmatter.get("disable-model-invocation") is True:
         lines.append("disable-model-invocation: true")
     metadata = frontmatter.get("metadata")
     if isinstance(metadata, dict) and metadata:
@@ -209,7 +223,7 @@ def emit_claudeai_zip(
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         for skill in _emitted_skills(result):
             name = slug(str(skill.doc.frontmatter.get("name", skill.doc.source.name)))
-            archive.writestr(f"skills/{name}/SKILL.md", render_skill_md(skill.doc))
+            archive.writestr(f"skills/{name}/SKILL.md", render_skill_md(skill.doc, spec_only=True))
             for rel, source_file in carry.get(name, []):
                 archive.writestr(f"skills/{name}/{rel}", source_file.read_bytes())
         archive.writestr(
@@ -337,31 +351,36 @@ def emit_api_payload(result: MergeResult) -> list[dict[str, str]]:
                 "name": slug(name),
                 "display_name": name,
                 "description": str(skill.doc.frontmatter.get("description", "")),
-                "content": render_skill_md(skill.doc),
+                "content": render_skill_md(skill.doc, spec_only=True),
             }
         )
     return payloads
 
 
 def api_surface_warnings(result: MergeResult) -> list[str]:
-    """Claude-Code-only frontmatter the API ``/v1/skills`` surface does not enforce.
+    """Frontmatter the claude.ai and ``/v1/skills`` surfaces drop or do not enforce.
 
-    The fields stay carried verbatim in the uploaded SKILL.md content, but the API ignores tool
-    and invocation frontmatter, so a tool-restricted or non-invocable composed skill is not
-    constrained there. Surface it so the gap is a known trade-off, not silent.
+    ``disallowed-tools`` and ``disable-model-invocation`` sit outside the Agent Skills spec, and
+    an upload refuses a SKILL.md that carries them, so the spec-only render leaves them out;
+    ``allowed-tools`` is in the spec and stays, but neither surface enforces tool frontmatter.
+    A tool-restricted or non-invocable composed skill is therefore not constrained there — surface
+    it so the gap is a known trade-off, not silent.
     """
     warnings: list[str] = []
     for skill in _emitted_skills(result):
         name = str(skill.doc.frontmatter.get("name", skill.doc.source.name))
-        carried = [
-            field
-            for field in ("allowed-tools", "disallowed-tools", "disable-model-invocation")
-            if _carried_present(skill.doc.frontmatter.get(field))
-        ]
-        if carried:
+        dropped = [f for f in SPEC_ONLY_DROPPED if _carried_present(skill.doc.frontmatter.get(f))]
+        kept = _carried_present(skill.doc.frontmatter.get("allowed-tools"))
+        if dropped:
             warnings.append(
-                f"{name}: {', '.join(carried)} carried in SKILL.md but the API surface does not "
-                "enforce tool or invocation frontmatter"
+                f"{name}: {', '.join(dropped)} left out of this surface (outside the Agent Skills "
+                "spec, the upload refuses them; the claude-code and marketplace emits keep them) "
+                "— the surface does not enforce tool or invocation frontmatter"
+            )
+        elif kept:
+            warnings.append(
+                f"{name}: allowed-tools carried in SKILL.md but the surface does not enforce "
+                "tool frontmatter"
             )
     return warnings
 

@@ -90,7 +90,7 @@ def detect_bundle(bundle: Path) -> tuple[LicenseInfo, list[ScanFinding]]:
             break
         if path.is_file() and path.suffix.lower() in {".py", ".sh", ".js", ".ts", ".md"}:
             text = path.read_text(encoding="utf-8", errors="replace")
-            tag_licenses.update(match.group(1) for match in _SPDX_TAG.finditer(text))
+            tag_licenses.update(_clean_id(match.group(1)) for match in _SPDX_TAG.finditer(text))
 
     frontmatter_license: str | None = None
     skill_md = root / "SKILL.md"
@@ -99,7 +99,7 @@ def detect_bundle(bundle: Path) -> tuple[LicenseInfo, list[ScanFinding]]:
             skill_md.read_text(encoding="utf-8", errors="replace")[:4096]
         )
         if match:
-            frontmatter_license = match.group(1)
+            frontmatter_license = _clean_id(match.group(1))
 
     spdx_id, source = _resolve_precedence(file_license, tag_licenses, frontmatter_license)
     detected = {value for value in (file_license, frontmatter_license, *tag_licenses) if value}
@@ -136,6 +136,11 @@ def detect_bundle(bundle: Path) -> tuple[LicenseInfo, list[ScanFinding]]:
             )
         )
     return info, findings
+
+
+def _clean_id(raw: str) -> str:
+    """Drop sentence punctuation left on an id (``license: MIT.``); no id ends in it."""
+    return raw.rstrip(".,;:")
 
 
 def detect_text(text: str) -> str | None:

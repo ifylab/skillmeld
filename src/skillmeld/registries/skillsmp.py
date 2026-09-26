@@ -4,9 +4,11 @@
 Authed breadth feed over the SkillsMP registry: ``search`` pages ``GET /api/v1/skills/search``
 and ``discover_repos`` folds the hits into ``owner/name`` GitHub slugs for a human to curate
 into ``hosted/sources.py`` — the scout surfaces candidates; catalog membership stays a
-deliberate decision. The response schema is undocumented upstream, so the shape observed live
-(2026-08-19) is pinned in ``tests/test_skillsmp.py``; the daily quota is 500 requests and
-every call runs under an explicit request budget.
+deliberate decision. The response envelope is undocumented upstream, so the shape observed live
+(2026-08-19) is pinned in ``tests/test_skillsmp.py``; the documented parts (Bearer auth, a
+per-page maximum of 50, a 500-requests-a-day quota reported in ``X-RateLimit-Daily-Remaining``,
+a 429 ``DAILY_QUOTA_EXCEEDED`` refusal) are followed here, and every call runs under an explicit
+request budget.
 """
 
 from __future__ import annotations
@@ -21,13 +23,20 @@ from pydantic import BaseModel
 BASE_URL = "https://skillsmp.com/api/v1"
 DAILY_QUOTA = 500
 _TIMEOUT = 30.0
-_PAGE_LIMIT = 100  # the API's per-page maximum
+_PAGE_LIMIT = 50  # the API's documented per-page maximum
+_REMAINING_HEADER = "X-RateLimit-Daily-Remaining"
 
 _GITHUB_REPO = re.compile(r"^https?://github\.com/([\w.-]+)/([\w.-]+)")
 
 
 class SkillsMPError(RuntimeError):
     """The API refused, or the response did not match the pinned schema."""
+
+
+class Quota:
+    """The daily quota as the last response reported it; ``None`` until a response carries it."""
+
+    remaining: int | None = None
 
 
 class SkillsMPHit(BaseModel):
@@ -51,6 +60,7 @@ def search(
     *,
     client: httpx.Client | None = None,
     budget: int = 10,
+    quota: Quota | None = None,
 ) -> list[SkillsMPHit]:
     """Page SkillsMP search results. Build-time only; ``budget`` caps requests for this call."""
     own = client is None
@@ -60,7 +70,7 @@ def search(
         page = 1
         for _ in range(max(budget, 1)):
             page_size = min(_PAGE_LIMIT, max(limit - len(hits), 1))
-            data = _get(http, {"q": query, "limit": page_size, "page": page})
+            data = _get(http, {"q": query, "limit": page_size, "page": page}, quota)
             skills = data.get("skills")
             if not isinstance(skills, list):
                 raise SkillsMPError("schema drift: data.skills is not a list")
@@ -94,10 +104,11 @@ def discover_repos(
     own = client is None
     http = client or _client()
     per_budget = max(budget // max(len(queries), 1), 1)
+    quota = Quota()
     try:
         by_repo: dict[str, list[SkillsMPHit]] = {}
         for query in queries:
-            for hit in search(query, per_query, client=http, budget=per_budget):
+            for hit in search(query, per_query, client=http, budget=per_budget, quota=quota):
                 slug = hit.repo
                 if slug is not None:
                     by_repo.setdefault(slug, []).append(hit)
@@ -116,6 +127,7 @@ def discover_repos(
             }
             for slug, repo_hits in ordered
         ],
+        "quota_remaining": quota.remaining,
         "note": (
             f"candidates only — curate into hosted/sources.py by hand; daily quota {DAILY_QUOTA}"
         ),
@@ -132,11 +144,20 @@ def _client() -> httpx.Client:
     )
 
 
-def _get(http: httpx.Client, params: dict[str, str | int]) -> dict[str, object]:
+def _get(
+    http: httpx.Client, params: dict[str, str | int], quota: Quota | None = None
+) -> dict[str, object]:
     try:
         response = http.get(f"{BASE_URL}/skills/search", params=params)
     except httpx.HTTPError as exc:
         raise SkillsMPError(f"SkillsMP unreachable: {exc}") from exc
+    if quota is not None:
+        quota.remaining = _remaining(response)
+    if response.status_code == 429:
+        raise SkillsMPError(
+            f"SkillsMP daily quota exhausted ({DAILY_QUOTA} requests a day, shared with the "
+            "catalog build); retry tomorrow or narrow the queries"
+        )
     if response.status_code != 200:
         raise SkillsMPError(f"SkillsMP returned HTTP {response.status_code}")
     try:
@@ -149,6 +170,11 @@ def _get(http: httpx.Client, params: dict[str, str | int]) -> dict[str, object]:
     if not isinstance(data, dict):
         raise SkillsMPError("schema drift: no data object")
     return cast(dict[str, object], data)
+
+
+def _remaining(response: httpx.Response) -> int | None:
+    value = response.headers.get(_REMAINING_HEADER)
+    return int(value) if value is not None and value.isdigit() else None
 
 
 def _hit(item: dict[str, object]) -> SkillsMPHit:

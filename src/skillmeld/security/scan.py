@@ -95,6 +95,7 @@ def scan_bundle(bundle: Path, *, deep: bool = True) -> ScanReport:
     root = bundle.resolve()
     findings: list[ScanFinding] = []
     py_files: list[Path] = []
+    scripts: list[str] = []
     scanned = 0
 
     for path in _walk(root):
@@ -114,7 +115,14 @@ def scan_bundle(bundle: Path, *, deep: bool = True) -> ScanReport:
         if b"\x00" in raw[:8192]:
             continue
         text = raw.decode("utf-8", errors="replace")
-        findings.extend(_scan_text(rel, _classify(path), text))
+        kind = _classify(path)
+        if kind is FileKind.SCRIPT:
+            scripts.append(rel)
+        findings.extend(_scan_text(rel, kind, text))
+
+    findings = _collapse_hosts(findings)
+    if scripts:
+        findings.append(_ships_scripts(scripts))
 
     rulesets = {"core": RULESET_VERSION}
     if deep:
@@ -129,6 +137,48 @@ def scan_bundle(bundle: Path, *, deep: bool = True) -> ScanReport:
         bundle_hash=dir_bundle_hash(root),
         scanner_version=SCANNER_VERSION,
         rulesets=rulesets,
+    )
+
+
+_HOST_RULES = frozenset({"core:external-url", "core:unlisted-domain"})
+
+
+def _collapse_hosts(findings: list[ScanFinding]) -> list[ScanFinding]:
+    """One finding per host and rule: a CDN referenced from every page is one fact, not eighty."""
+    first_index: dict[tuple[str, str], int] = {}
+    counts: dict[tuple[str, str], int] = {}
+    kept: list[ScanFinding] = []
+    for finding in findings:
+        if finding.rule_id not in _HOST_RULES:
+            kept.append(finding)
+            continue
+        key = (finding.rule_id, finding.message)
+        if key in first_index:
+            counts[key] += 1
+            continue
+        first_index[key] = len(kept)
+        counts[key] = 1
+        kept.append(finding)
+    for key, index in first_index.items():
+        if counts[key] > 1:
+            kept[index] = kept[index].model_copy(
+                update={"message": f"{kept[index].message} ({counts[key]} places)"}
+            )
+    return kept
+
+
+def _ships_scripts(scripts: list[str]) -> ScanFinding:
+    shown = ", ".join(scripts[:5]) + (f", +{len(scripts) - 5} more" if len(scripts) > 5 else "")
+    return ScanFinding(
+        rule_id="core:ships-scripts",
+        category=META,
+        severity=Severity.INFO,
+        locus="-",
+        message=(
+            f"Ships {len(scripts)} executable script file(s): {shown}. Skills that bundle scripts "
+            "carried a vulnerability about twice as often in a 2026 study of 31k community "
+            "skills (arXiv 2601.10338); the scanners above cover them, so weigh their findings."
+        ),
     )
 
 

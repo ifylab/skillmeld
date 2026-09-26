@@ -45,6 +45,15 @@ def test_spdx_tag_detection(tmp_path: Path) -> None:
     assert info.source == "spdx-tag"
 
 
+def test_frontmatter_license_ignores_trailing_punctuation(tmp_path: Path) -> None:
+    bundle = tmp_path / "skill"
+    bundle.mkdir()
+    (bundle / "SKILL.md").write_text("---\nname: x\nlicense: MIT.\n---\nbody\n")
+    info, findings = detect_bundle(bundle)
+    assert info.spdx_id == "MIT"
+    assert "license-unrecognized" not in {f.rule_id for f in findings}
+
+
 def test_frontmatter_detection(tmp_path: Path) -> None:
     root = tmp_path / "bundle"
     root.mkdir()

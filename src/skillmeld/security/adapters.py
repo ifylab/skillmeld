@@ -29,6 +29,7 @@ from skillmeld.security.rules import (
     META,
     PROMPT_INJECTION,
     SECRET_EXPOSURE,
+    SUSPICIOUS_DOWNLOAD,
     UNVERIFIABLE_DEPENDENCY,
     Severity,
 )
@@ -54,16 +55,23 @@ _SKILLSPECTOR_SEVERITY = {
     "MEDIUM": Severity.MEDIUM,
     "LOW": Severity.LOW,
 }
-# skillspector's own 17 categories, folded onto the taxonomy the gate reports; anything
-# unmapped (Behavioral AST, YARA Signatures, ...) lands in malicious-code.
+# skillspector 2.12's 18 categories (plus the literal "Security" it reports for a rule with no
+# category), folded onto the taxonomy the gate reports; anything unmapped — Tool Misuse, Output
+# Handling, YARA Match, MCP Least Privilege, Insecure Deserialization — lands in malicious-code.
 _SKILLSPECTOR_CATEGORY = {
     "Prompt Injection": PROMPT_INJECTION,
     "Anti-Refusal": PROMPT_INJECTION,
     "System Prompt Leakage": PROMPT_INJECTION,
     "Memory Poisoning": PROMPT_INJECTION,
     "Trigger Abuse": PROMPT_INJECTION,
+    "Excessive Agency": PROMPT_INJECTION,
+    "Rogue Agent": PROMPT_INJECTION,
+    "MCP Tool Poisoning": PROMPT_INJECTION,
     "Data Exfiltration": CREDENTIAL_HANDLING,
+    "Privilege Escalation": CREDENTIAL_HANDLING,
+    "Agent Snooping": CREDENTIAL_HANDLING,
     "Supply Chain": UNVERIFIABLE_DEPENDENCY,
+    "Server-Side Request Forgery": SUSPICIOUS_DOWNLOAD,
 }
 
 
@@ -223,6 +231,8 @@ def parse_gitleaks(report_text: str, bundle: Path) -> list[ScanFinding]:
 
 def _run_skillspector(binary: str, bundle: Path) -> list[ScanFinding]:
     # --no-llm is non-negotiable: the default mode sends file contents to an LLM provider.
+    # Exit 1 means the risk score passed 50 with the JSON already written; 2 means the scan
+    # itself failed (verified against v2.12.0).
     cmd = [binary, "scan", str(bundle), "--format", "json", "--no-llm"]
     output = _run(cmd, "skillspector", ok_codes={0, 1})
     if isinstance(output, ScanFinding):
@@ -236,13 +246,15 @@ def parse_skillspector(output: str, bundle: Path) -> list[ScanFinding]:
     except ValueError:
         return [_notice("skillspector produced unparseable output")]
     findings: list[ScanFinding] = []
-    issues = data.get("issues", []) if isinstance(data, dict) else []
-    for issue in issues:
+    if not isinstance(data, dict):
+        return findings
+    completeness = data.get("analysis_completeness")
+    if isinstance(completeness, dict) and completeness.get("total_components") == 0:
+        findings.append(_notice("skillspector scanned no components: nothing it reads as a skill"))
+    for issue in data.get("issues", []) or []:
         category = str(issue.get("category", ""))
         severity = _SKILLSPECTOR_SEVERITY.get(str(issue.get("severity")), Severity.LOW)
         location = issue.get("location", {}) or {}
-        confidence = issue.get("confidence")
-        detail = f" ({float(confidence):.0%} confidence)" if confidence is not None else ""
         findings.append(
             ScanFinding(
                 rule_id=f"skillspector:{issue.get('id', 'unknown')}",
@@ -250,10 +262,25 @@ def parse_skillspector(output: str, bundle: Path) -> list[ScanFinding]:
                 severity=severity,
                 locus=f"{_rel(str(location.get('file', '')), bundle)}:"
                 f"{location.get('start_line', 0)}",
-                message=str(issue.get("message") or f"{category or 'skillspector'}{detail}"),
+                message=_skillspector_message(issue, category),
             )
         )
     return findings
+
+
+def _skillspector_message(issue: dict[str, object], category: str) -> str:
+    """The pattern and explanation the tool wrote, plus the matched text when it is short."""
+    pattern = str(issue.get("pattern") or category or "skillspector")
+    explanation = str(issue.get("explanation") or "").strip()
+    matched = str(issue.get("finding") or "").strip()
+    confidence = issue.get("confidence")
+    detail = ""
+    if isinstance(confidence, (int, float)):
+        detail = f" ({float(confidence):.0%} confidence)"
+    message = f"{pattern}: {explanation}" if explanation else pattern
+    if matched and "\n" not in matched and len(matched) <= 120:
+        message = f"{message} [{matched}]"
+    return message + detail
 
 
 def _skillspector_version(binary: str) -> str:

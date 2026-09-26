@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 import textwrap
 from pathlib import Path
+from typing import cast
 
 import yaml
 from pydantic import BaseModel, Field
@@ -125,10 +126,13 @@ def _split_frontmatter(text: str) -> tuple[dict[str, object], str]:
     """Split a SKILL.md into (frontmatter, body).
 
     Flat ``key: value`` lines are parsed leniently — tolerant of colons inside a value, the common
-    case for descriptions. A ``key:`` with no inline value followed by indented lines is a nested
-    block (e.g. ``metadata``) and is parsed with ``yaml.safe_load`` — never ``yaml.load``, since
-    sources are untrusted community content. A malformed or non-collection block degrades to an
-    empty value rather than raising or leaking sub-keys to the top level.
+    case for descriptions. A value that opens a multi-line scalar (a ``>`` or ``|`` block
+    indicator, or a quote the line does not close) is folded with ``yaml.safe_load`` together with
+    its indented continuation lines, as is a ``key:`` whose indented block is plain prose rather
+    than a mapping or list. A ``key:`` followed by an indented mapping or list (e.g. ``metadata``)
+    is parsed with ``yaml.safe_load`` — never ``yaml.load``, since sources are untrusted community
+    content. A malformed block degrades to an empty value rather than raising or leaking sub-keys
+    to the top level.
     """
     if not text.startswith("---\n"):
         return {}, text
@@ -150,7 +154,7 @@ def _split_frontmatter(text: str) -> tuple[dict[str, object], str]:
             i += 1
             continue
         value = value.strip()
-        if value:
+        if value and not _opens_multiline(value):
             frontmatter[key] = value.strip("\"'")
             i += 1
             continue
@@ -159,10 +163,38 @@ def _split_frontmatter(text: str) -> tuple[dict[str, object], str]:
         while j < len(lines) and (not lines[j].strip() or lines[j][:1].isspace()):
             block.append(lines[j])
             j += 1
-        nested = _parse_nested_block(block)
-        frontmatter[key] = nested if nested is not None else ""
+        if value:
+            frontmatter[key] = _parse_scalar_block(key, value, block)
+        else:
+            nested = _parse_nested_block(block)
+            frontmatter[key] = nested if nested is not None else _parse_scalar_block(key, "", block)
         i = j
     return frontmatter, body
+
+
+_BLOCK_INDICATOR = re.compile(r"^[>|][-+0-9]{0,2}$")
+
+
+def _opens_multiline(value: str) -> bool:
+    """True when an inline value only starts a scalar that continues on the following lines."""
+    if _BLOCK_INDICATOR.match(value):
+        return True
+    quote = value[0]
+    return quote in "\"'" and not (len(value) >= 2 and value.endswith(quote))
+
+
+def _parse_scalar_block(key: str, value: str, block: list[str]) -> str:
+    """Fold a multi-line scalar (block, quoted, or plain) to one string via ``yaml.safe_load``."""
+    if not value and not any(line.strip() for line in block):
+        return ""
+    try:
+        loaded = yaml.safe_load("\n".join([f"{key}: {value}".rstrip(), *block]))
+    except yaml.YAMLError:
+        return ""
+    if not isinstance(loaded, dict):
+        return ""
+    scalar = cast(dict[str, object], loaded).get(key)
+    return scalar.strip() if isinstance(scalar, str) else ""
 
 
 def _parse_nested_block(block: list[str]) -> object | None:

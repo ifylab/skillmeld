@@ -109,6 +109,30 @@ def test_search_respects_the_request_budget() -> None:
     assert len(seen) == 2  # the 500/day quota is real; a call never runs away
 
 
+def test_search_pages_at_the_documented_maximum() -> None:
+    pages = {
+        1: _page([_skill("a", "x/a", 1)], 1, True),
+        2: _page([_skill("b", "x/b", 2)], 2, False),
+    }
+    seen: list[dict[str, str]] = []
+    search("x", limit=100, client=_transport(pages, seen))
+    assert [call["limit"] for call in seen] == ["50", "50"]
+
+
+def test_discover_repos_reports_the_remaining_quota_and_stops_on_429() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params["q"] == "excel":
+            body = _page([_skill("excel", "x/excel", 5)], 1, False)
+            return httpx.Response(200, json=body, headers={"X-RateLimit-Daily-Remaining": "41"})
+        return httpx.Response(429, json={"error": {"code": "DAILY_QUOTA_EXCEEDED"}})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    report = discover_repos(["excel"], client=client)
+    assert report["quota_remaining"] == 41
+    with pytest.raises(SkillsMPError, match="daily quota exhausted"):
+        discover_repos(["pdf"], client=client)
+
+
 def test_search_rejects_schema_drift() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"success": True, "data": {"unexpected": []}})
@@ -120,10 +144,10 @@ def test_search_rejects_schema_drift() -> None:
 
 def test_search_surfaces_http_errors() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(429, json={"error": "rate limited"})
+        return httpx.Response(503, json={"error": "unavailable"})
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    with pytest.raises(SkillsMPError, match="429"):
+    with pytest.raises(SkillsMPError, match="503"):
         search("x", client=client)
 
 

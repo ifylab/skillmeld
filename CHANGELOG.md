@@ -4,6 +4,60 @@ All notable changes to skillmeld are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-09-26
+
+### Added
+
+- skillmeld is on PyPI: `uv tool install skillmeld` (or `pipx install skillmeld`) puts the
+  `skillmeld` command on your PATH. Releases publish from the version tag through PyPI trusted
+  publishing; the sdist and wheel carry only the package, its tests and the top-level docs.
+- The Claude Code plugin installs straight from GitHub: `/plugin marketplace add ifylab/skillmeld`
+  fetches the repository into the plugin cache and the skill runs the engine from there. No clone.
+- `awesome-scout`: build-time discovery over a curated awesome-list (default:
+  VoltAgent/awesome-agent-skills). Every linked repository not already in the catalog, ranked by
+  GitHub stars. Candidates only; membership in the source list stays a hand-made decision.
+- Scans name the executable script files a bundle ships (`core:ships-scripts`, informational).
+  Skills that bundle scripts carried a vulnerability about twice as often in a 2026 study of 31k
+  community skills (arXiv 2601.10338), so the review card can say what will run.
+- Trigger scoring lists `leaky_ids`, the queries that spell out their target skill's compound
+  name and so route trivially, and a `held_out_pass_rate_strict` without them; `eval improve`
+  repeats the warning.
+- `skillsmp-scout` reports the remaining daily quota from the API's headers and stops with a
+  plain message when the quota is exhausted.
+
+### Changed
+
+- Discovery matches a hyphenated name on its parts too, so `weekly-production-review` is
+  reachable from "weekly review" and not only from the exact compound.
+- A host referenced from many files collapses into one finding per host and rule, with a count,
+  instead of one finding per line.
+- SkillSpector findings carry the tool's pattern, explanation and matched text; its JSON has no
+  `message` field, so earlier versions showed only the category. The category fold covers all 18
+  categories of v2.12, an empty scan is reported as a notice, and the adapter is verified against
+  v2.12.0.
+- The claude.ai zip and the `/v1/skills` payload render frontmatter within the Agent Skills spec:
+  `disallowed-tools` and `disable-model-invocation` are left out, named in `warnings`, because an
+  upload refuses a SKILL.md that carries them. The Claude Code and marketplace emits keep them.
+- `emit api` reports no required `anthropic-beta` header: the Skills API, the code execution tool
+  and the Files API are all GA. `beta_headers` is empty and `legacy_beta_headers` names the two
+  identifiers still accepted as opt-ins.
+- The SkillsMP scout pages at the documented maximum of 50 per request.
+- SKILL.md says that REVIEW is the usual verdict for a skill that calls the network or reads
+  files, and names the two Claude Code settings that govern the skill-listing budget.
+
+### Fixed
+
+- A multi-line frontmatter `description` (a `>` or `|` block, a quoted or a plain continuation)
+  is read whole. Earlier versions kept the block marker or nothing, which made such skills
+  unreachable by discovery.
+- A trailing period on a frontmatter `license:` value (`MIT.`) no longer breaks the SPDX id.
+
+### Security
+
+- `anyio` raised to 4.15.1, past two advisories fixed in 4.14.2 (IDNA host-name matching in TLS
+  streams, and process-pool workers blocking on stderr). skillmeld does not use either path; the
+  package arrives through httpx.
+
 ## [0.3.0] - 2026-08-19
 
 ### Added

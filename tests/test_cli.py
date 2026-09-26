@@ -642,11 +642,8 @@ def test_emit_api_carries_headers_scope_and_provenance(
     code = main(["emit", "api", "--result", str(result_path), "--bundles", str(bundle)])
     payload = json.loads(capsys.readouterr().out)
     assert code == 0
-    assert payload["beta_headers"] == [
-        "code-execution-2025-08-25",
-        "skills-2025-10-02",
-        "files-api-2025-04-14",
-    ]
+    assert payload["beta_headers"] == []
+    assert payload["legacy_beta_headers"] == ["skills-2025-10-02", "files-api-2025-04-14"]
     assert payload["requires_confirmation"] is False
     assert any("workspace-wide" in w for w in payload["warnings"])
     assert "## Sharing scope" in payload["provenance_md"]

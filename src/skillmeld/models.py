@@ -20,16 +20,14 @@ from pydantic import BaseModel, Field
 API_DESCRIPTION_LIMIT = 1024
 CLAUDE_CODE_ROUTING_LIMIT = 1536
 
-# Skills API headers (re-verified 2026-08-19 against
-# https://platform.claude.com/docs/en/build-with-claude/skills-guide). Skills are GA: the
-# code-execution and skills identifiers are optional now but remain valid opt-ins, so sending
-# them keeps older examples working; the files-api header is still required whenever the Files
-# API moves files in or out of the container. Identifiers get superseded — re-verify on failure.
-SKILLS_API_BETA_HEADERS = (
-    "code-execution-2025-08-25",
-    "skills-2025-10-02",
-    "files-api-2025-04-14",
-)
+# Skills API headers (re-verified 2026-09-26 against
+# https://platform.claude.com/docs/en/build-with-claude/skills-guide and the Files API and code
+# execution pages). The Skills API, the code execution tool and the Files API are all GA: no
+# request needs an ``anthropic-beta`` header, so nothing is emitted as required. The two legacy
+# identifiers below are still accepted as opt-ins and return the beta response shapes; they are
+# listed for readers migrating older clients. Re-verify on failure.
+SKILLS_API_BETA_HEADERS: tuple[str, ...] = ()
+SKILLS_API_LEGACY_BETA_HEADERS = ("skills-2025-10-02", "files-api-2025-04-14")
 
 # Marketplace names reserved for official Anthropic use; a third-party marketplace.json must not
 # claim them (Claude Code refuses the add). The server also blocks impersonation names such as

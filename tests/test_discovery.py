@@ -118,6 +118,23 @@ def test_deterministic_output() -> None:
     assert first.model_dump() == second.model_dump()
 
 
+def test_hyphenated_names_match_on_their_parts() -> None:
+    profile = UseCaseProfile(
+        summary="A weekly review of production metrics.",
+        languages=[],
+        frameworks=[],
+        conventions=[],
+        tasks=["weekly review"],
+    )
+    catalog = [
+        _entry("x/skills:wpr", "weekly-production-review", "", bundle_hash="h1"),
+        _entry("x/skills:other", "spreadsheet-macros", "", bundle_hash="h2"),
+    ]
+    result = discover(profile, catalog)
+    ids = [c.entry.id for c in result.candidates]
+    assert ids == ["x/skills:wpr"]
+
+
 def test_repeated_tokens_do_not_inflate_score() -> None:
     stuffed = _entry(
         "x/skills:stuffed",
