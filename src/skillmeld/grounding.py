@@ -14,6 +14,7 @@ import tomllib
 from collections.abc import Iterator
 from pathlib import Path
 
+from skillmeld.emit.targets import DETECTION_MARKERS, agents_for_markers
 from skillmeld.models import RepoEvidence, UseCaseProfile
 
 IGNORE_DIRS = frozenset(
@@ -92,6 +93,16 @@ CONFIG_BY_FILE: dict[str, str] = {
 
 _README_NAMES = ("README.md", "README.rst", "README.txt", "README")
 _README_LIMIT = 1200
+# Agent-instructions files, in the order a profile should prefer them: the cross-agent AGENTS.md
+# first, then each agent's own. Only the first one found is excerpted.
+_INSTRUCTION_FILES = (
+    "AGENTS.md",
+    "CLAUDE.md",
+    ".claude/CLAUDE.md",
+    "GEMINI.md",
+    ".github/copilot-instructions.md",
+)
+_INSTRUCTIONS_LINES = 40
 _MAX_FILES = 20000
 _TEST_EXTS = frozenset({".py", ".ts", ".js", ".rs", ".go"})
 
@@ -132,6 +143,8 @@ def scan(repo: Path) -> RepoEvidence:
             p.name for p in root.iterdir() if p.is_dir() and p.name not in IGNORE_DIRS
         )
 
+    instructions_file, instructions_excerpt = _instructions_excerpt(root)
+    agent_dirs = _agent_markers(root)
     return RepoEvidence(
         root=str(root),
         file_counts=file_counts,
@@ -141,6 +154,10 @@ def scan(repo: Path) -> RepoEvidence:
         top_dirs=top_dirs,
         readme_excerpt=_readme_excerpt(root),
         has_tests=has_tests,
+        instructions_file=instructions_file,
+        instructions_excerpt=instructions_excerpt,
+        agent_dirs=agent_dirs,
+        agents=agents_for_markers(agent_dirs),
     )
 
 
@@ -196,6 +213,25 @@ def _readme_excerpt(root: Path) -> str:
         if candidate.is_file():
             return candidate.read_text(encoding="utf-8", errors="ignore").strip()[:_README_LIMIT]
     return ""
+
+
+def _instructions_excerpt(root: Path) -> tuple[str, str]:
+    """The first agent-instructions file found and its first lines, or empty strings."""
+    for name in _INSTRUCTION_FILES:
+        candidate = root / name
+        if candidate.is_file():
+            lines = candidate.read_text(encoding="utf-8", errors="ignore").splitlines()
+            return name, "\n".join(lines[:_INSTRUCTIONS_LINES]).strip()
+    return "", ""
+
+
+def _agent_markers(root: Path) -> list[str]:
+    """Root-level markers that show which agents the repo is already set up for."""
+    found: list[str] = []
+    for marker, _agent in DETECTION_MARKERS:
+        if (root / marker).exists() and marker not in found:
+            found.append(marker)
+    return found
 
 
 def _parse_manifest(path: Path) -> list[str]:

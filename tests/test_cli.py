@@ -722,3 +722,266 @@ def test_profile_flag_refuses_grounds_full_output(
     out = json.loads(capsys.readouterr().out)
     assert code == 1
     assert "'profile' object" in out["error"]
+
+
+# --- 0.5.0: the skills surface, install fan-out, plugin surface -----------------------------
+
+
+def _emit(args: list[str], capsys: pytest.CaptureFixture[str]) -> tuple[int, Any]:
+    code = main(["emit", *args])
+    return code, json.loads(capsys.readouterr().out)
+
+
+def test_emit_defaults_to_the_skills_surface(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bundle, result_path = _marketplace_inputs(tmp_path)
+    out = tmp_path / "out"
+    code, payload = _emit(
+        ["--result", str(result_path), "--bundles", str(bundle), "--out", str(out)], capsys
+    )
+    assert code == 0
+    assert payload["surface"] == "skills"
+    assert (out / "retriever" / "SKILL.md").is_file()
+    assert any(p.endswith("PROVENANCE-retriever.md") for p in payload["written"])
+    assert payload["installed"] == [] and payload["agents_md"] is None
+    assert payload["portability"][0]["skill"] == "retriever"
+    assert payload["portability"][0]["verdict"] == "portable"
+
+
+def test_emit_skills_install_for_prints_per_agent_paths(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bundle, result_path = _marketplace_inputs(tmp_path)
+    project = tmp_path / "proj"
+    project.mkdir()
+    code, payload = _emit(
+        [
+            "skills",
+            "--result",
+            str(result_path),
+            "--bundles",
+            str(bundle),
+            "--out",
+            str(tmp_path / "out"),
+            "--install-for",
+            "codex,cursor,claude-code",
+            "--project-root",
+            str(project),
+        ],
+        capsys,
+    )
+    assert code == 0
+    paths = {tuple(item["agents"]): item["path"] for item in payload["installed"]}
+    assert paths[("codex", "cursor")].endswith(".agents/skills")
+    assert paths[("claude-code",)].endswith(".claude/skills")
+    assert (project / ".agents" / "skills" / "retriever" / "SKILL.md").is_file()
+    assert (project / ".claude" / "skills" / "retriever" / "SKILL.md").is_file()
+    assert payload["sidecars"] == [] and payload["overwritten"] == []
+
+
+def test_emit_skills_unknown_agent_errors_with_suggestion(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bundle, result_path = _marketplace_inputs(tmp_path)
+    code, payload = _emit(
+        [
+            "--result",
+            str(result_path),
+            "--bundles",
+            str(bundle),
+            "--out",
+            str(tmp_path / "out"),
+            "--install-for",
+            "cursur",
+        ],
+        capsys,
+    )
+    assert code == 1 and "did you mean cursor" in payload["error"]
+
+
+def test_emit_skills_force_reports_overwritten(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bundle, result_path = _marketplace_inputs(tmp_path)
+    project = tmp_path / "proj"
+    project.mkdir()
+    base = [
+        "--result",
+        str(result_path),
+        "--bundles",
+        str(bundle),
+        "--out",
+        str(tmp_path / "out"),
+        "--install-for",
+        "codex",
+        "--project-root",
+        str(project),
+    ]
+    assert _emit(base, capsys)[0] == 0
+    code, payload = _emit(base, capsys)
+    assert code == 1 and "pass --force" in payload["error"]
+    code, payload = _emit([*base, "--force"], capsys)
+    assert code == 0
+    assert payload["overwritten"] == [str(project / ".agents" / "skills" / "retriever")]
+
+
+def test_emit_skills_codex_sidecar_lands_only_in_codex_targets(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bundle, result_path = _marketplace_inputs(tmp_path)
+    project = tmp_path / "proj"
+    project.mkdir()
+    code, payload = _emit(
+        [
+            "--result",
+            str(result_path),
+            "--bundles",
+            str(bundle),
+            "--out",
+            str(tmp_path / "out"),
+            "--install-for",
+            "codex,claude-code",
+            "--project-root",
+            str(project),
+            "--codex-sidecar",
+        ],
+        capsys,
+    )
+    assert code == 0
+    assert (project / ".agents" / "skills" / "retriever" / "agents" / "openai.yaml").is_file()
+    assert not (project / ".claude" / "skills" / "retriever" / "agents").exists()
+    assert (tmp_path / "out" / "retriever" / "agents" / "openai.yaml").is_file()
+    assert len(payload["sidecars"]) == 2
+
+
+def test_emit_skills_agents_md_reports_action(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bundle, result_path = _marketplace_inputs(tmp_path)
+    project = tmp_path / "proj"
+    project.mkdir()
+    agents_md = project / "AGENTS.md"
+    args = [
+        "--result",
+        str(result_path),
+        "--bundles",
+        str(bundle),
+        "--out",
+        str(tmp_path / "out"),
+        "--install-for",
+        "codex",
+        "--project-root",
+        str(project),
+        "--agents-md",
+        str(agents_md),
+        "--force",
+    ]
+    code, payload = _emit(args, capsys)
+    assert code == 0 and payload["agents_md"] == {"path": str(agents_md), "action": "created"}
+    text = agents_md.read_text(encoding="utf-8")
+    assert "<!-- skillmeld:start retriever -->" in text
+    assert "`.agents/skills/` (codex)" in text
+    assert "- `retriever`: Retrieve documents." in text
+    code, payload = _emit(args, capsys)
+    assert code == 0 and payload["agents_md"]["action"] == "replaced"
+    assert agents_md.read_text(encoding="utf-8") == text
+
+
+def test_emit_plugin_defaults_and_warns_like_marketplace(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bundle, result_path = _marketplace_inputs(tmp_path)
+    out = tmp_path / "plugin"
+    code, payload = _emit(
+        [
+            "plugin",
+            "--result",
+            str(result_path),
+            "--bundles",
+            str(bundle),
+            "--out",
+            str(out),
+            "--codex-marketplace",
+        ],
+        capsys,
+    )
+    assert code == 0 and payload["surface"] == "plugin"
+    assert any("marketplace name defaulted" in w for w in payload["warnings"])
+    assert any("plugin version defaulted" in w for w in payload["warnings"])
+    assert any("owner name defaulted" in w for w in payload["warnings"])
+    manifest = json.loads((out / "plugin.json").read_text(encoding="utf-8"))
+    assert manifest["$schema"].startswith("https://agent-plugins.org/schemas/1.0.0/")
+    assert manifest["name"] == "retriever"
+    market = json.loads(
+        (out / ".agents" / "plugins" / "marketplace.json").read_text(encoding="utf-8")
+    )
+    assert market["plugins"][0]["source"] == {"source": "local", "path": "./"}
+    assert not (out / ".claude-plugin").exists()
+    assert not (out / ".codex-plugin").exists()
+
+
+def test_emit_plugin_refuses_a_reserved_codex_marketplace_name(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bundle, result_path = _marketplace_inputs(tmp_path)
+    code, payload = _emit(
+        [
+            "plugin",
+            "--result",
+            str(result_path),
+            "--bundles",
+            str(bundle),
+            "--out",
+            str(tmp_path / "plugin"),
+            "--codex-marketplace",
+            "--marketplace-name",
+            "agent-skills",
+        ],
+        capsys,
+    )
+    assert code == 1 and "reserved" in payload["error"]
+
+
+# --- 0.5.0: skill-install ---------------------------------------------------------------------
+
+
+def test_skill_install_writes_the_driver_into_agents_skills(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = tmp_path / "proj"
+    project.mkdir()
+    code = main(["skill-install", "--project-root", str(project)])
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    target = project / ".agents" / "skills" / "skillmeld"
+    assert payload["installed"] == str(target)
+    assert (target / "SKILL.md").is_file()
+    run_sh = target / "scripts" / "run.sh"
+    assert run_sh.is_file() and run_sh.stat().st_mode & 0o111
+    assert "uv tool install skillmeld" in payload["next"]
+    # Refuses a second install without --force, then replaces it.
+    code = main(["skill-install", "--project-root", str(project)])
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 1 and "--force" in payload["error"]
+    code = main(["skill-install", "--project-root", str(project), "--force"])
+    assert code == 0 and json.loads(capsys.readouterr().out)["overwritten"] == str(target)
+
+
+def test_skill_install_user_scope_and_explicit_dir(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    assert main(["skill-install", "--scope", "user"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["installed"] == str(home / ".agents" / "skills" / "skillmeld")
+    kiro = tmp_path / ".kiro" / "skills"
+    assert main(["skill-install", "--dir", str(kiro)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["installed"] == str(kiro / "skillmeld")
+    assert (
+        (kiro / "skillmeld" / "SKILL.md")
+        .read_text(encoding="utf-8")
+        .startswith("---\nname: skillmeld")
+    )

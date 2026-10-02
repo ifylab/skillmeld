@@ -135,3 +135,12 @@ def test_blocked_hashes_empty_without_index(tmp_path: Path) -> None:
     cache = _build_cache(tmp_path, {"catalog": _catalog_bytes()})
     assert catalog.load_blocked_hashes(cache) == set()
     assert catalog.load_blocked_hashes(tmp_path / "unsynced") == set()
+
+
+def test_catalog_entry_without_sidecars_loads_with_default() -> None:
+    from skillmeld.models import CatalogEntry
+
+    entry = CatalogEntry.model_validate(
+        {"id": "a/b:c", "source": {"name": "c"}, "files": [], "bundle_hash": ""}
+    )
+    assert entry.sidecars == []

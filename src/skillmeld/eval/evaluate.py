@@ -9,8 +9,11 @@ Bodies never change here; authoring is confined to the description and gated eve
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic import BaseModel, Field
 
+from skillmeld.emit.portability import PortabilityReport, lint_set
 from skillmeld.eval.leakage import held_out_leaks
 from skillmeld.eval.quality import QualityReport, score_quality
 from skillmeld.eval.route import route_queries
@@ -28,6 +31,7 @@ class EvalReport(BaseModel):
     leakage: list[str] = Field(default_factory=list)
     verifier_problems: list[str] = Field(default_factory=list)
     ingested_query_ids: list[str] = Field(default_factory=list)
+    portability: list[PortabilityReport] = Field(default_factory=list)
     passed: bool = True
 
 
@@ -48,8 +52,13 @@ def evaluate(
     *,
     queries: list[TriggerQuery] | None = None,
     judgments: list[TriggerJudgment] | None = None,
+    carry: dict[str, list[tuple[str, Path]]] | None = None,
 ) -> EvalReport:
-    """Score a merged set across every mandatory gate. ``passed`` requires all of them clean."""
+    """Score a merged set across every mandatory gate. ``passed`` requires all of them clean.
+
+    The portability lint rides along (``carry`` names the support files it reads) so the review
+    card can say how the set behaves on other agents; it is advisory and never affects ``passed``.
+    """
     quality = [score_quality(skill.doc) for skill in result.skills]
     problems = verify(result, sources)
     trigger: TriggerScore | None = None
@@ -74,6 +83,7 @@ def evaluate(
         leakage=leaks,
         verifier_problems=problems,
         ingested_query_ids=ingested,
+        portability=lint_set(result, carry),
         passed=passed,
     )
 

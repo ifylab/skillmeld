@@ -8,11 +8,23 @@ in play, and what was deduped or dropped and why.
 
 from __future__ import annotations
 
+from skillmeld.emit.portability import PortabilityReport, portability_section
 from skillmeld.models import AssembledAtom, MergeResult, SkillDoc
 
 
-def build_provenance(result: MergeResult, sources: list[SkillDoc], *, generated_at: str) -> str:
-    """Render PROVENANCE.md for a merged set. Deterministic given its inputs."""
+def build_provenance(
+    result: MergeResult,
+    sources: list[SkillDoc],
+    *,
+    generated_at: str,
+    portability: list[PortabilityReport] | None = None,
+    sidecars: list[str] | None = None,
+) -> str:
+    """Render PROVENANCE.md for a merged set. Deterministic given its inputs.
+
+    ``portability`` adds the lint's per-skill verdicts; ``sidecars`` names derived files written
+    beside the skills (none of them body text). Both sections are omitted when not given.
+    """
     lines = [
         "# Provenance",
         "",
@@ -51,6 +63,20 @@ def build_provenance(result: MergeResult, sources: list[SkillDoc], *, generated_
     if plan.warnings:
         lines += ["", "## Warnings", ""]
         lines += [f"- {warning}" for warning in plan.warnings]
+    if portability:
+        lines += [
+            "",
+            "## Portability",
+            "",
+            "How each skill behaves on agents other than Claude Code (portable: unchanged; "
+            "degrades: a Claude-only field or substitution is ignored there; claude-only: the "
+            "body relies on Claude Code substitution). Bodies are never rewritten.",
+            "",
+            *portability_section(portability),
+        ]
+    if sidecars:
+        lines += ["", "## Sidecars", ""]
+        lines += [f"- {sidecar}" for sidecar in sidecars]
     return "\n".join(lines) + "\n"
 
 

@@ -1,27 +1,37 @@
 ---
 name: skillmeld
 description: "Discovers existing community skills for a described use case and merges the best two or three into one coherent, deduplicated, security-scanned skill set tailored to the user's project. Use when someone wants to assemble or compose skills for a workflow, combine existing skills instead of writing one from scratch, or build a tailored skillset from community sources. Grounds in the user's repo, scans every candidate before use, and shows provenance plus a review before installing."
+license: Apache-2.0
+compatibility: Needs uv or the skillmeld CLI on PATH. Runs in any agent that loads Agent Skills.
 ---
 
 # skillmeld
 
-This skill is the front-end that drives the bundled `skillmeld` Python engine. The engine is
+This skill is the front-end that drives the `skillmeld` Python engine. The engine is
 deterministic and makes no model calls; you supply the judgment and gate every side effect on
 the user's approval.
 
 ## What this does
 
-Turns a described use case (plus the user's repo) into a coherent skill set assembled from existing community skills: discover candidates, security-scan them, merge the best two or three, and install with the user's approval. Composes existing skills; never writes new instructions from scratch.
+Turns a described use case (plus the user's repo) into a coherent skill set assembled from existing community skills: discover candidates, security-scan them, merge the best two or three, and install with the user's approval. Composes existing skills; never writes new instructions from scratch. The output is a plain Agent Skills tree, so it installs into Claude Code, Codex, Cursor, Gemini CLI, Copilot and any other agent that reads `SKILL.md`.
 
 ## How it runs
 
 The deterministic engine is invoked from this skill via:
 
-    bash "${CLAUDE_SKILL_DIR}/scripts/run.sh" <command> [args...]
+    bash <skill-dir>/scripts/run.sh <command> [args...]
 
-`run.sh` is a thin wrapper; equivalently, run `uv run skillmeld <command>` from the package root. The steps below use the `run.sh` form.
+where `<skill-dir>` is the directory holding this SKILL.md: `scripts/run.sh` sits beside this file, so resolve it from the location your skills listing gave for `skillmeld` (search for this file if the listing showed none). `run.sh` needs bash and finds the engine in this order: the `skillmeld` command on PATH (a `uv tool install skillmeld` or `pipx install skillmeld`), then this checkout when it is the skillmeld repository (a clone or the Claude Code plugin cache), then `uv tool run skillmeld`; with none of those it stops and says how to install. The steps below use the `run.sh` form.
 
 Each command prints JSON to stdout. This skill reads that JSON and supplies the judgment steps (grouping atoms, adjudicating conflicts, choosing among existing options) in-session. The engine itself makes no model calls.
+
+## Install this skill
+
+- Claude Code: `/plugin marketplace add ifylab/skillmeld` then `/plugin install skillmeld@ifylab`.
+- Any other agent: install the engine (`uv tool install skillmeld` or `pipx install skillmeld`), then `skillmeld skill-install` writes this skill to `.agents/skills/skillmeld/` in the project (`--scope user` for `~/.agents/skills/skillmeld/`), which Codex, Cursor, Gemini CLI, Copilot, Windsurf, OpenCode, Goose, Amp, Junie and Roo read. Kiro and Factory read their own folders at project scope: pass `--dir .kiro/skills` or `--dir .factory/skills`. A clone's `skills/skillmeld/` directory or `npx skills add ifylab/skillmeld` (Node) are the same files.
+- Invoke it as `/skillmeld` in Claude Code and Cursor, `$skillmeld` in Codex, or by asking for the skillmeld skill in Gemini CLI, Copilot and the rest; every agent also activates it on its own when a request matches the description above. A new skill is picked up when the agent next starts.
+
+Verified in Claude Code and Codex (install, discovery and a run) and in Gemini CLI (install and discovery); Cursor, Copilot, Windsurf, OpenCode, Goose, Amp, Kiro, Junie, Factory and Roo are documented from their own skill docs. When you need to name the agent you are running in for `--install-for`, use: Claude Code `claude-code`, Codex `codex`, Cursor `cursor`, Gemini CLI `gemini-cli`, GitHub Copilot `github-copilot`, Windsurf `windsurf`, OpenCode `opencode`, Goose `goose`, Amp `amp`, Kiro `kiro`, Junie `junie`, Factory `factory`, Roo Code `roo`.
 
 ## Flow
 
@@ -35,7 +45,11 @@ Each command prints JSON to stdout. This skill reads that JSON and supplies the 
 2. Ground — `run.sh ground <repo>` collects deterministic evidence and a partial profile.
    Complete the profile yourself from the session: write `summary` (2-3 sentences) and
    `tasks` (3-6 representative tasks in the user's words), then save the completed profile
-   JSON to a temp file.
+   JSON to a temp file. The evidence also carries `instructions_excerpt` (the head of the
+   repo's AGENTS.md, CLAUDE.md, GEMINI.md or Copilot instructions, whichever it has) for the
+   conventions it already states, and `agents` (the agents the repo is set up for, from its
+   `.claude/`, `.cursor/`, `.agents/skills/`, `AGENTS.md` and similar markers), which is the
+   default install target at Stop 2.
 3. Discover — `run.sh catalog sync` first refreshes the signed catalog (fast when fresh;
    offline it falls back to the last verified sync). The trust model: verification happens at
    sync time, not on every read — `catalog verify` strictly re-checks the cached snapshot
@@ -82,7 +96,7 @@ Each command prints JSON to stdout. This skill reads that JSON and supplies the 
    (after step 8).
 8. Author descriptions + evaluate — the merge leaves every child skill's `description` empty on
    purpose (it never invents text), so each one must be authored before it can ship; a skill
-   with no description never triggers in Claude Code. For each child, write a short, trigger-
+   with no description never triggers in any agent. For each child, write a short, trigger-
    friendly description and gate it through
    `run.sh eval improve --result <merge.json> --bundles <dir>... --skill <index|orchestrator>
    --description "..."` with the trigger
@@ -92,10 +106,11 @@ Each command prints JSON to stdout. This skill reads that JSON and supplies the 
    your reported routing and from an independent engine-side pass that routes the queries against
    the descriptions, so acceptance never rests on your self-report. Phrase each description with
    the literal words a user would say; the independent router keys on them. Keep it
-   within the routing budget — Claude Code truncates the description at 1536 characters in its skill
-   listing (`skillListingMaxDescChars`; the whole listing shares 1% of the context window unless
-   `skillListingBudgetFraction` raises it) and the API surface caps it at 1024, so lead with the
-   key use case. The orchestrator
+   within the routing budget — the Agent Skills spec caps a description at 1024 characters and
+   every agent budgets its skill listing on it (Claude Code truncates at 1536 in its listing,
+   `skillListingMaxDescChars`; the whole listing shares 1% of the context window unless
+   `skillListingBudgetFraction` raises it; Codex caps the listing at 2% of context), so lead
+   with the key use case. The orchestrator
    ships with a templated routing description already; refine it the same way (`--skill
    orchestrator`) only if needed. Pass `--sources <discover.json>` to `eval improve` and `eval run`
    (the same JSON you gave merge) so the verifier resolves each source's catalog identity — without
@@ -105,7 +120,13 @@ Each command prints JSON to stdout. This skill reads that JSON and supplies the 
    reported-routing gate scores zero without your judgments even when `independent_trigger` is
    perfect. Quality `warnings` never block `passed`; relay them in the review below. A body
    warning (an unescaped html-like tag inherited from a source) has no in-engine fix — bodies are
-   byte-traced from sources — so do not spend improve rounds trying to clear it. Both commands
+   byte-traced from sources — so do not spend improve rounds trying to clear it. `eval run` also
+   reports `portability`, one verdict per skill for agents other than Claude Code: `portable`
+   (loads unchanged), `degrades` (a Claude-only field or the arguments placeholder is ignored
+   there), or
+   `claude-only` (the body relies on Claude Code substitution, its skill-directory variable or
+   an inline `!`-prefixed command block, which other agents pass through as literal text). It is advisory,
+   never a gate, and bodies are never rewritten to change it. Both commands
    list `leaky_ids`: trigger queries that spell out their target skill's compound name ("ifc
    quantity takeoff" for `ifc-quantity-takeoff`) route trivially and inflate the pass-rate, so
    rewrite them the way a user would ask and read `held_out_pass_rate_strict` for the rate
@@ -118,27 +139,38 @@ Each command prints JSON to stdout. This skill reads that JSON and supplies the 
    selection stay on your own queries.
    With the set now complete, show the user the plan and the authored descriptions as one
    consolidated review before writing anything.
-9. Emit — `run.sh emit <surface> --result <merge.json> --bundles <dir>...` packages the result;
-   install only after the user approves. Emit
-   refuses any skill (child or orchestrator) whose description is still empty, so a set can never
-   ship dead even if this step was rushed. Surfaces: `claude-code` (skills tree), `claudeai` (zip),
-   `api` (`/v1/skills` payload), and `marketplace` (a `strict:false` Claude Code plugin marketplace
-   the user can host and `/plugin marketplace add`). Each returns `warnings` to relay before install:
-   `emit claude-code`, `emit claudeai`, and `emit marketplace` flag any description over the
-   1536-char Claude Code routing cap (truncated in the skill listing, so routing keywords are lost);
-   `emit api` flags a description over the 1024-char `/v1/skills` cap (the upload is rejected), and
-   both `emit api` and `emit claudeai` name any `disallowed-tools` or `disable-model-invocation`
-   they left out — those fields sit outside the Agent Skills spec and an upload refuses a SKILL.md
-   that carries them (the claude-code and marketplace emits keep them); `allowed-tools` stays, but
-   neither surface enforces it. `emit api` also reports that no `anthropic-beta` header is required
-   (`beta_headers` is empty; `legacy_beta_headers` lists the two identifiers older clients may
-   still send), the provenance text to keep with the upload (`provenance_md`), and a
-   standing warning that a `/v1/skills` upload is workspace-wide — every member of the workspace can
-   invoke it. When the output says `requires_confirmation: true`, or any scan in the run came back
-   REVIEW, name the finding and get the user's explicit confirmation before uploading.
-   `emit marketplace` defaults the
-   marketplace name and owner to the skill's slug and warns when it does (pass `--marketplace-name`
-   and `--owner-name` to set them); it refuses a name reserved for official use.
+9. Emit — `run.sh emit [surface] --result <merge.json> --bundles <dir>...` packages the result;
+   install only after the user approves. Emit refuses any skill (child or orchestrator) whose
+   description is still empty or whose name cannot match its directory, so a set can never ship
+   dead even if this step was rushed. Surfaces:
+   - `skills` (the default): the Agent Skills tree, `<out>/<name>/SKILL.md` per skill with the
+     spec's frontmatter only, carried support files, and `PROVENANCE-<set>.md`. This is what every
+     agent loads unchanged. `--install-for <agents>` copies it into each agent's own directory
+     (see Stop 2); `--codex-sidecar` adds `agents/openai.yaml` beside each skill for Codex, derived
+     from the name and description; `--agents-md <path>` adds or refreshes a marker-delimited
+     block in that file naming the installed skills and where each agent reads them.
+   - `plugin`: an Agent Plugins 1.0.0 package (`plugin.json`, `skills/<name>/`, `PROVENANCE.md`)
+     the cross-vendor plugin format; `--codex-marketplace` adds `.agents/plugins/marketplace.json`
+     so `codex plugin marketplace add <dir>` finds it.
+   - `claude-code` (the same tree with Claude Code's own frontmatter fields kept), `claudeai`
+     (zip), `api` (`/v1/skills` payload), and `marketplace` (a `strict:false` Claude Code plugin
+     marketplace the user can host and `/plugin marketplace add`).
+   Each returns `warnings` to relay before install. `skills`, `plugin`, `claudeai` and `api` carry
+   the portability verdicts (`portability`) and a warning line per skill that is not fully
+   portable. Every surface flags a description over the 1536-char Claude Code listing cap;
+   `emit api` flags one over the 1024-char spec cap (the upload is rejected); `emit api` and
+   `emit claudeai` name any `disallowed-tools` or `disable-model-invocation` they left out —
+   those fields sit outside the Agent Skills spec and an upload refuses a SKILL.md that carries
+   them (the claude-code and marketplace emits keep them); `allowed-tools` stays, but no agent
+   other than Claude Code enforces it. `emit api` also reports that no `anthropic-beta` header is
+   required (`beta_headers` is empty; `legacy_beta_headers` lists the two identifiers older
+   clients may still send), the provenance text to keep with the upload (`provenance_md`), and a
+   standing warning that a `/v1/skills` upload is workspace-wide — every member of the workspace
+   can invoke it. When the output says `requires_confirmation: true`, or any scan in the run came
+   back REVIEW, name the finding and get the user's explicit confirmation before uploading.
+   `emit marketplace` and `emit plugin` default the plugin name, marketplace name and owner to
+   the skill's slug and warn when they do (pass `--plugin-name`, `--marketplace-name` and
+   `--owner-name` to set them); a name reserved for official use is refused.
 
 Every atom in the merged output traces byte-for-byte to a source skill; the engine invents no
 instruction text. Nothing is fetched, merged, or installed without showing the user what will
@@ -162,13 +194,35 @@ Two human stops on the happy path; everything else streams as narrated progress.
     bundle ships;
   - any frontmatter REVIEW from `plan.frontmatter_findings` (a source's pre-approved tool dropped
     in the intersection, or a child left non-invocable), named for the skill it affects;
-  - the license resolution and a coarse confidence band.
+  - one portability line from `eval run` (`ifc-qto portable; gh-script degrades: allowed-tools
+    names Bash, not enforced outside Claude Code`), and for a `claude-only` skill the plain
+    sentence that its body relies on Claude Code substitution and other agents read that text
+    literally;
+  - the license resolution and a coarse confidence band;
+  - where it will be installed: the agents from `ground`'s `agents` list (or the agent you are
+    running in when the list is empty) and the directory each one reads.
   Actions: Approve and install / Adjust / Dry-run / Cancel.
-- **Stop 2 — second-layer scan and write** (the install/trust gate). Re-scan the merged
-  artifact (`run.sh scan <merged-bundle>`); a BLOCK here refuses the install. Write to
-  `.claude/skills/<name>/` with `SKILL.md` and supporting files, plus the set's
-  `PROVENANCE-<set>.md` at the skills root (the per-set name keeps one composed set's
-  provenance from overwriting another's in a shared directory), only after the user accepts.
+- **Stop 2 — second-layer scan and write** (the install/trust gate). First
+  `run.sh emit skills --result <merge.json> --bundles <dir>... --out <scratch>` writes the tree
+  to a scratch directory; re-scan each emitted skill there (`run.sh scan <scratch>/<name>`); a
+  BLOCK refuses the install. Only after the user accepts, run the same emit again with
+  `--install-for <agents>` (comma-separated: `claude-code`, `codex`, `cursor`, `gemini-cli`,
+  `github-copilot`, `windsurf`, `opencode`, `goose`, `amp`, `kiro`, `junie`, `factory`, `roo`,
+  `agents` for the bare `.agents/skills/` folder, or `all`). Agents that read the shared
+  `.agents/skills/` folder (Codex, Cursor, Gemini CLI, Copilot, Windsurf, OpenCode, Goose, Amp,
+  Junie, Roo) get one copy there; Claude Code gets `.claude/skills/` with its own frontmatter
+  fields kept; Kiro gets `.kiro/skills/` and Factory `.factory/skills/` (Factory reads the shared
+  folder at user scope). `--native` writes each agent's own folder instead of the shared one, for
+  a user who keeps them separate. One `--scope` per run (`project`, the default, or `user` for
+  the home-directory folders); `--project-root` names the project when you are not running from
+  it. The emit refuses to replace a skill directory that
+  already exists; pass `--force` only when the user has confirmed the overwrite, and relay
+  `overwritten`. Relay the `installed` paths per agent verbatim; each install root also gets the
+  set's `PROVENANCE-<set>.md` (the per-set name keeps one composed set's provenance from
+  overwriting another's in a shared directory). Add `--agents-md AGENTS.md` when the repo has
+  an AGENTS.md or the user asks; it adds or refreshes one marker-delimited block and touches
+  nothing else in the file. Add `--codex-sidecar` when Codex is a target and the user wants the
+  Codex UI metadata.
 - **A BLOCK is never one-click overridable.** REVIEW is the only interactive security stop;
   BLOCK is refused and excluded before the user chooses. Keep BLOCK rare and high-precision so
   REVIEW prompts stay trusted.
@@ -235,6 +289,15 @@ The JSON shapes you author by hand, so you do not have to read the engine source
   updated set. To author several descriptions, feed the returned `result` into the next
   `improve` so edits accumulate; author the children one at a time, then run `eval run` over the
   final result.
+- **Ground evidence**: `ground` prints `{"profile": ..., "evidence": ...}`; `evidence` carries
+  `instructions_file` + `instructions_excerpt` (the first 40 lines of the repo's agent
+  instructions) and `agent_dirs` + `agents` (the markers found and the install targets they
+  imply, in the order `--install-for` takes them).
+- **Emit skills output**: `{"surface": "skills", "written": [...], "installed": [{"agents":
+  [...], "scope": "project", "path": "...", "skills": [...]}], "overwritten": [...], "sidecars":
+  [...], "agents_md": {"path": ..., "action": "created" | "replaced" | "appended"} | null,
+  "portability": [{"skill", "verdict", "findings"}], "warnings": [...]}`. An install conflict is
+  an `{"error": ...}` naming the existing directories and `--force`.
 
 `eval` and `emit` take either the bare `result` object or the full `{result, problems}` (the
 loaders accept both). A "coarse confidence band" on the review card is your judgment to add, not a

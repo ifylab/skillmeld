@@ -317,3 +317,102 @@ def test_detect_license_text_prefers_fingerprints_and_survives_absent_scancode(
     assert called is False  # fingerprint hit never consults scancode
     assert github_crawl._detect_license_text("all rights reserved, bespoke terms") is None
     assert called is True  # unknown text tried the escalation and found no binary
+
+
+# --- 0.5.0: license last resort, sidecars, plugin-shaped layouts -------------------------------
+
+
+def _crawl_one(repo: str, tree: Mapping[str, object], files: dict[str, bytes]) -> list:
+    sha = "feed0005" + "0" * 32
+    client = httpx.Client(
+        transport=httpx.MockTransport(_repo_handler(repo, sha, "main", tree, files))
+    )
+    return crawl([repo], client=client)
+
+
+def test_crawl_reads_frontmatter_license_as_a_last_resort() -> None:
+    tree = {"tree": [{"path": "skills/s/SKILL.md", "type": "blob"}]}
+    files = {"skills/s/SKILL.md": b"---\nname: s\ndescription: d\nlicense: MIT.\n---\n# S\n"}
+    entries = _crawl_one("acme/nolicense", tree, files)
+    assert entries[0].source.license.spdx_id == "MIT"
+    assert entries[0].source.license.source == "frontmatter"
+
+
+def test_crawl_file_license_beats_frontmatter_license() -> None:
+    tree = {
+        "tree": [
+            {"path": "LICENSE", "type": "blob"},
+            {"path": "skills/s/SKILL.md", "type": "blob"},
+        ]
+    }
+    files = {
+        "LICENSE": FILES["LICENSE"],
+        "skills/s/SKILL.md": b"---\nname: s\ndescription: d\nlicense: Apache-2.0\n---\n# S\n",
+    }
+    entries = _crawl_one("acme/both", tree, files)
+    assert entries[0].source.license.spdx_id == "MIT"
+    assert entries[0].source.license.source == "license-file"
+
+
+def test_crawl_ignores_an_unknown_frontmatter_license_id() -> None:
+    tree = {"tree": [{"path": "skills/s/SKILL.md", "type": "blob"}]}
+    files = {"skills/s/SKILL.md": b"---\nname: s\ndescription: d\nlicense: Proprietary\n---\n# S\n"}
+    entries = _crawl_one("acme/odd", tree, files)
+    assert entries[0].source.license.spdx_id is None
+
+
+def test_crawl_records_openai_sidecar_paths() -> None:
+    tree = {
+        "tree": [
+            {"path": "LICENSE", "type": "blob"},
+            {"path": "skills/s/SKILL.md", "type": "blob"},
+            {"path": "skills/s/agents/openai.yaml", "type": "blob"},
+            {"path": "skills/t/SKILL.md", "type": "blob"},
+        ]
+    }
+    files = {
+        "LICENSE": FILES["LICENSE"],
+        "skills/s/SKILL.md": b"---\nname: s\ndescription: d\n---\n# S\n",
+        "skills/s/agents/openai.yaml": b"interface:\n  display_name: S\n",
+        "skills/t/SKILL.md": b"---\nname: t\ndescription: d\n---\n# T\n",
+    }
+    entries = _crawl_one("acme/codex", tree, files)
+    by_id = {entry.id: entry for entry in entries}
+    assert by_id["acme/codex:skills/s"].sidecars == ["agents/openai.yaml"]
+    assert "agents/openai.yaml" in {f.path for f in by_id["acme/codex:skills/s"].files}
+    assert by_id["acme/codex:skills/t"].sidecars == []
+
+
+def test_crawl_plugin_layout_skill_dirs_are_discovered() -> None:
+    tree = {
+        "tree": [
+            {"path": "LICENSE", "type": "blob"},
+            {"path": ".github/plugins/azure/skills/deploy/SKILL.md", "type": "blob"},
+            {"path": "skills/cloud/run/SKILL.md", "type": "blob"},
+        ]
+    }
+    files = {
+        "LICENSE": FILES["LICENSE"],
+        ".github/plugins/azure/skills/deploy/SKILL.md": b"---\nname: deploy\ndescription: d\n---\n",
+        "skills/cloud/run/SKILL.md": b"---\nname: run\ndescription: d\n---\n",
+    }
+    entries = _crawl_one("acme/plugins", tree, files)
+    assert [e.id for e in entries] == [
+        "acme/plugins:.github/plugins/azure/skills/deploy",
+        "acme/plugins:skills/cloud/run",
+    ]
+
+
+def test_proprietary_per_skill_license_stays_unknown() -> None:
+    tree = {
+        "tree": [
+            {"path": "skills/docx/SKILL.md", "type": "blob"},
+            {"path": "skills/docx/LICENSE.txt", "type": "blob"},
+        ]
+    }
+    files = {
+        "skills/docx/SKILL.md": b"---\nname: docx\ndescription: d\n---\n# D\n",
+        "skills/docx/LICENSE.txt": b"Copyright Example. All rights reserved.\n",
+    }
+    entries = _crawl_one("acme/proprietary", tree, files)
+    assert entries[0].source.license.spdx_id is None

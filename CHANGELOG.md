@@ -4,6 +4,68 @@ All notable changes to skillmeld are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-09-30
+
+### Added
+
+- `emit skills`, now the default surface: the Agent Skills tree every reader loads unchanged,
+  rendered with the spec's frontmatter only, with carried support files and the set's
+  `PROVENANCE-<set>.md`. `--install-for <agents>` copies it into each agent's own directory:
+  one copy in the shared `.agents/skills/` folder for Codex, Cursor, Gemini CLI, Copilot,
+  Windsurf, OpenCode, Goose, Amp, Junie and Roo, `.claude/skills/` for Claude Code with its own
+  frontmatter fields kept, and the native folders for Factory and Kiro; `--scope user` writes
+  the home-directory folders instead. Copies, never symlinks; an existing skill directory is
+  refused unless `--force`, which reports what it replaced. `--native` writes each agent's own
+  directory instead of the shared one.
+- A portability lint on every spec-only surface and in `eval run`: one verdict per skill for
+  agents other than Claude Code, `portable`, `degrades` (a Claude-only frontmatter field or
+  `$ARGUMENTS` is ignored there) or `claude-only` (the body relies on Claude Code substitution
+  or an inline command block, passed through as literal text elsewhere), with `portability:*`
+  findings that name the line. Advisory only; it never gates and never rewrites a body.
+  PROVENANCE.md gains a Portability section.
+- `emit plugin`: an Agent Plugins 1.0.0 package (`plugin.json`, `skills/<name>/`,
+  `PROVENANCE.md`), the cross-vendor plugin layout; `--codex-marketplace` adds
+  `.agents/plugins/marketplace.json` so `codex plugin marketplace add <dir>` followed by
+  `codex plugin add <name>@<name>` installs it (verified with Codex CLI 0.159; the manifest
+  validates against the published 1.0.0 schema), and `--codex-compat` mirrors the manifest to
+  `.codex-plugin/plugin.json`.
+- `--codex-sidecar` (skills and plugin surfaces) writes `agents/openai.yaml` beside each skill
+  for Codex, derived from the skill's name and description only.
+- `--agents-md <path>` (skills surface) adds or refreshes one marker-delimited block naming the
+  installed skills and the directory each agent reads; a re-run replaces its own block and
+  touches nothing else in the file.
+- `skill-install` writes the `/skillmeld` driver skill from the installed package into an
+  agent's skills folder, `.agents/skills/skillmeld/` by default (`--scope user` for the home
+  folder, `--dir` for an agent's own), so a PyPI install is enough to run the skill in Codex,
+  Gemini CLI, Cursor and the rest with no clone and no Node. The skill ships inside the wheel.
+- The quality gate applies the Agent Skills spec's name rules (lowercase alphanumerics joined
+  by single hyphens, at most 64 characters) and warns on `compatibility` over 500 characters
+  and on Claude-only frontmatter; `emit` refuses a name that cannot match its directory, as it
+  refuses an empty description.
+- The catalog crawls `google/skills` (Apache-2.0) and `microsoft/skills` (MIT) alongside
+  `anthropics/skills` and `obra/superpowers`; a skill's frontmatter `license:` is read as the
+  last resort when a repository has no LICENSE file; each entry lists the agent-specific
+  `sidecars` it ships.
+- `ground` reads the repository's agent instructions (AGENTS.md first, then CLAUDE.md,
+  GEMINI.md or the Copilot instructions) into `instructions_excerpt`, and reports the agents the
+  repository is set up for in `agents`, from its `.claude/`, `.cursor/`, `.agents/skills/`,
+  `AGENTS.md` and similar markers.
+
+### Changed
+
+- The `/skillmeld` skill runs from any agent that loads Agent Skills: its frontmatter is the
+  spec's, it no longer depends on a Claude Code variable to find its script, and `scripts/run.sh`
+  finds the engine on PATH, in the checkout, or through `uv tool run`. Verified in Claude Code
+  (2.1.286) and Codex CLI (0.160): install, discovery and a run of the skill; in Gemini CLI
+  (0.62): install and discovery. `skillmeld skill-install` or a copy of `skills/skillmeld/` to
+  `.agents/skills/skillmeld/` installs it outside Claude Code.
+- The skill's second stop writes the set to a scratch tree, re-scans it, and installs with
+  `emit skills --install-for`, defaulting to the agents the repository already uses.
+- `emit` with no surface means `emit skills`. The claude.ai and API emits report the portability
+  verdicts. The Claude Code and marketplace emits are unchanged.
+- README and the skill describe the output as a plain Agent Skills tree that installs into any
+  reader, not a Claude Code artifact.
+
 ## [0.4.0] - 2026-09-26
 
 ### Added
@@ -180,5 +242,8 @@ grounding, discovery over a signed catalog, selection (at most three), a tri-sta
 security gate, the eight-step byte-traceable merge engine, evaluation, and packaging
 for Claude Code / claude.ai / the API with provenance.
 
+[0.5.0]: https://github.com/ifylab/skillmeld/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/ifylab/skillmeld/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/ifylab/skillmeld/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ifylab/skillmeld/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ifylab/skillmeld/releases/tag/v0.1.0

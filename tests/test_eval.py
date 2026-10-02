@@ -518,3 +518,40 @@ def test_route_queries_routes_a_single_child_on_a_genuine_match() -> None:
     result.skills[0].doc.frontmatter["description"] = "Retrieve documents from the corpus."
     query = TriggerQuery(id="q1", text="retrieve corpus documents", kind="trigger")
     assert route_queries(result, [query])[0].routed_skill == a
+
+
+# --- spec rules in the quality gate (0.5.0) --------------------------------------------
+
+
+def test_quality_flags_uppercase_or_double_hyphen_names() -> None:
+    for bad in ("IFC-qto", "ifc--qto", "-ifc", "ifc_qto"):
+        doc = SkillDoc(
+            source=SkillSource(name="x"),
+            frontmatter={"name": bad, "description": "Quantity takeoff."},
+            body="hi\n",
+        )
+        report = score_quality(doc)
+        assert not report.passed, bad
+        assert any("emitted directory" in issue for issue in report.issues), bad
+
+
+def test_quality_warns_on_compatibility_over_500_but_passes() -> None:
+    doc = SkillDoc(
+        source=SkillSource(name="x"),
+        frontmatter={"name": "x", "description": "d.", "compatibility": "c" * 600},
+        body="hi\n",
+    )
+    report = score_quality(doc)
+    assert report.passed
+    assert any("500-char cap" in warning for warning in report.warnings)
+
+
+def test_quality_warns_on_claude_only_frontmatter_but_passes() -> None:
+    doc = SkillDoc(
+        source=SkillSource(name="x"),
+        frontmatter={"name": "x", "description": "d.", "disable-model-invocation": True},
+        body="hi\n",
+    )
+    report = score_quality(doc)
+    assert report.passed
+    assert any("outside the Agent Skills spec" in warning for warning in report.warnings)

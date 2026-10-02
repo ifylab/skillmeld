@@ -29,6 +29,8 @@ MONEY_ACCESS = "money-access"
 META = "meta"
 # License findings (detection, conflicts, incompatible combinations) — ours, not Snyk's.
 LICENSE = "license"
+# Portability findings (Claude-only syntax or frontmatter, spec limits) — ours; never gate.
+PORTABILITY = "portability"
 
 
 class Severity(StrEnum):

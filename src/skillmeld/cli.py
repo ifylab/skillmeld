@@ -8,11 +8,16 @@ import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING, NamedTuple
 
 from pydantic import ValidationError
 
 from skillmeld import __version__
 from skillmeld.discovery import DEFAULT_LIMIT, discover
+from skillmeld.emit.targets import AGENT_NAMES, SCOPES
+
+if TYPE_CHECKING:
+    from skillmeld.emit.portability import PortabilityReport
 from skillmeld.grounding import profile_from, scan
 from skillmeld.models import Candidate, MergeResult, SkillDoc, UseCaseProfile
 from skillmeld.select import SelectionError, select
@@ -120,6 +125,38 @@ def _cmd_ground(repo: str) -> int:
     evidence = scan(target)
     profile = profile_from(evidence)
     return _emit({"profile": profile.model_dump(), "evidence": evidence.model_dump()})
+
+
+def _cmd_skill_install(args: argparse.Namespace) -> int:
+    from skillmeld.driver import DRIVER_NAME, default_root, install_driver
+    from skillmeld.emit.package import InstallConflict
+
+    root = (
+        Path(args.dir)
+        if args.dir
+        else default_root(args.scope, project_root=Path(args.project_root), home=Path.home())
+    )
+    target = root / DRIVER_NAME
+    overwritten = str(target) if args.force and (target.exists() or target.is_symlink()) else None
+    try:
+        written = install_driver(root, force=args.force)
+    except InstallConflict as exc:
+        return _error(
+            f"{exc.paths[0]} already exists; pass --force to replace it with the packaged skill"
+        )
+    except FileNotFoundError as exc:
+        return _error(str(exc))
+    return _emit(
+        {
+            "installed": str(target),
+            "files": written,
+            "overwritten": overwritten,
+            "next": (
+                "make sure the engine is on PATH (uv tool install skillmeld, or pipx install "
+                "skillmeld), then start the agent and invoke the skillmeld skill"
+            ),
+        }
+    )
 
 
 def _cmd_catalog(action: str, base_url: str | None = None) -> int:
@@ -388,7 +425,10 @@ def _cmd_eval(args: argparse.Namespace) -> int:
             judgments = [
                 TriggerJudgment.model_validate(j) for j in json.loads(_read_text(args.judgments))
             ]
-        report = evaluate(result, sources, queries=queries, judgments=judgments)
+        from skillmeld.emit.package import plan_support_carry
+
+        carry = plan_support_carry(result, sources, args.bundles)
+        report = evaluate(result, sources, queries=queries, judgments=judgments, carry=carry)
         if getattr(args, "write_evals", None):
             from skillmeld.eval.interchange import InterchangeError, dump_evals
 
@@ -536,7 +576,6 @@ def _cmd_emit(args: argparse.Namespace) -> int:
         api_support_file_warnings,
         api_surface_warnings,
         apply_source_licenses,
-        default_plugin_name,
         emit_api_payload,
         emit_blockers,
         emit_claude_code,
@@ -546,6 +585,7 @@ def _cmd_emit(args: argparse.Namespace) -> int:
         plan_support_carry,
         routing_truncation_warnings,
     )
+    from skillmeld.emit.portability import lint_set, portability_warnings
     from skillmeld.emit.provenance import build_provenance
     from skillmeld.models import SKILLS_API_BETA_HEADERS, SKILLS_API_LEGACY_BETA_HEADERS, Verdict
 
@@ -562,9 +602,22 @@ def _cmd_emit(args: argparse.Namespace) -> int:
 
     blockers = emit_blockers(result)
     if blockers:
-        return _error("refusing to emit a skill with no description: " + "; ".join(blockers))
+        return _error(
+            "refusing to emit a skill with no description or an unloadable name: "
+            + "; ".join(blockers)
+        )
     apply_source_licenses(result, sources)
     generated_at = args.generated_at or datetime.now(UTC).isoformat(timespec="seconds")
+
+    if args.surface in ("skills", "plugin"):
+        if args.out is None:
+            return _error(f"emit {args.surface} requires --out")
+        carry = plan_support_carry(result, sources, args.bundles)
+        reports = lint_set(result, carry)
+        warnings = routing_truncation_warnings(result) + portability_warnings(reports)
+        if args.surface == "skills":
+            return _emit_skills(args, result, sources, carry, generated_at, reports, warnings)
+        return _emit_plugin(args, result, sources, carry, generated_at, reports, warnings)
 
     if args.surface == "api":
         provenance = build_provenance(result, sources, generated_at=generated_at)
@@ -577,7 +630,10 @@ def _cmd_emit(args: argparse.Namespace) -> int:
                 "before uploading to a shared workspace"
             )
         warnings += api_surface_warnings(result) + api_description_warnings(result)
-        warnings += api_support_file_warnings(plan_support_carry(result, sources, args.bundles))
+        api_carry = plan_support_carry(result, sources, args.bundles)
+        warnings += api_support_file_warnings(api_carry)
+        api_reports = lint_set(result, api_carry)
+        warnings += portability_warnings(api_reports)
         return _emit(
             {
                 "surface": "api",
@@ -586,6 +642,7 @@ def _cmd_emit(args: argparse.Namespace) -> int:
                 "legacy_beta_headers": list(SKILLS_API_LEGACY_BETA_HEADERS),
                 "provenance_md": provenance,
                 "requires_confirmation": requires_confirmation,
+                "portability": [report.model_dump() for report in api_reports],
                 "warnings": warnings,
             }
         )
@@ -598,88 +655,247 @@ def _cmd_emit(args: argparse.Namespace) -> int:
     if args.surface == "claudeai":
         data = emit_claudeai_zip(result, sources=sources, generated_at=generated_at, carry=carry)
         Path(out).write_bytes(data)
+        zip_reports = lint_set(result, carry)
         return _emit(
             {
                 "surface": "claudeai",
                 "zip": out,
                 "bytes": len(data),
-                "warnings": routing_warnings + api_surface_warnings(result),
+                "portability": [report.model_dump() for report in zip_reports],
+                "warnings": routing_warnings
+                + api_surface_warnings(result)
+                + portability_warnings(zip_reports),
             }
         )
     if args.surface == "marketplace":
-        from skillmeld.merge.synthesize import slug
-
         if result.orchestrator is None and not result.skills:
             return _error("nothing to emit: the merge result has no skills")
-        warnings = list(routing_warnings)
-
-        if args.plugin_name:
-            plugin_name = slug(args.plugin_name)
-            if plugin_name != args.plugin_name:
-                warnings.append(f"plugin name normalized to '{plugin_name}' (must be kebab-case)")
-        else:
-            plugin_name = default_plugin_name(result)
-            if result.orchestrator is not None:
-                warnings.append(
-                    f"plugin name defaulted to '{plugin_name}' from the composed skills; "
-                    "pass --plugin-name to set it"
-                )
-
-        if args.marketplace_name:
-            marketplace_name = slug(args.marketplace_name)
-            if marketplace_name != args.marketplace_name:
-                warnings.append(
-                    f"marketplace name normalized to '{marketplace_name}' (must be kebab-case)"
-                )
-        else:
-            marketplace_name = plugin_name
-            warnings.append(
-                f"marketplace name defaulted to '{marketplace_name}'; "
-                "pass --marketplace-name to set your namespace"
-            )
-        reserved = marketplace_name_blocker(marketplace_name)
+        identity, identity_warnings = _plugin_identity(args, result, surface="marketplace")
+        reserved = marketplace_name_blocker(identity.marketplace_name)
         if reserved is not None:
             return _error(reserved + "; pass a different --marketplace-name")
-
-        if args.owner_name:
-            owner = {"name": args.owner_name}
-        else:
-            owner = {"name": marketplace_name}
-            warnings.append(
-                f"owner name defaulted to '{marketplace_name}'; "
-                "pass --owner-name to set the maintainer"
-            )
-        if args.owner_email:
-            owner["email"] = args.owner_email
-        if args.owner_url:
-            owner["url"] = args.owner_url
-
-        if args.marketplace_version:
-            marketplace_version = args.marketplace_version
-        else:
-            marketplace_version = "0.1.0"
-            warnings.append(
-                "marketplace version defaulted to '0.1.0'; bump --marketplace-version on a "
-                "re-composition so `claude plugin update` sees the change"
-            )
-
         written = emit_marketplace(
             result,
             Path(out),
             sources=sources,
             generated_at=generated_at,
-            marketplace_name=marketplace_name,
-            owner=owner,
-            version=marketplace_version,
-            plugin_name=plugin_name,
+            marketplace_name=identity.marketplace_name,
+            owner=identity.owner,
+            version=identity.version,
+            plugin_name=identity.plugin_name,
             carry=carry,
         )
-        return _emit({"surface": "marketplace", "written": written, "warnings": warnings})
+        return _emit(
+            {
+                "surface": "marketplace",
+                "written": written,
+                "warnings": [*routing_warnings, *identity_warnings],
+            }
+        )
 
     written = emit_claude_code(
         result, Path(out), sources=sources, generated_at=generated_at, carry=carry
     )
     return _emit({"surface": "claude-code", "written": written, "warnings": routing_warnings})
+
+
+class _PluginIdentity(NamedTuple):
+    plugin_name: str
+    marketplace_name: str
+    owner: dict[str, str]
+    version: str
+
+
+def _plugin_identity(
+    args: argparse.Namespace, result: MergeResult, *, surface: str
+) -> tuple[_PluginIdentity, list[str]]:
+    """Resolve plugin name, marketplace name, owner and version from the flags, with the same
+    defaults and warnings on both plugin-shaped surfaces."""
+    from skillmeld.emit.package import default_plugin_name
+    from skillmeld.merge.synthesize import slug
+
+    warnings: list[str] = []
+    if args.plugin_name:
+        plugin_name = slug(args.plugin_name)
+        if plugin_name != args.plugin_name:
+            warnings.append(f"plugin name normalized to '{plugin_name}' (must be kebab-case)")
+    else:
+        plugin_name = default_plugin_name(result)
+        if result.orchestrator is not None:
+            warnings.append(
+                f"plugin name defaulted to '{plugin_name}' from the composed skills; "
+                "pass --plugin-name to set it"
+            )
+    if args.marketplace_name:
+        marketplace_name = slug(args.marketplace_name)
+        if marketplace_name != args.marketplace_name:
+            warnings.append(
+                f"marketplace name normalized to '{marketplace_name}' (must be kebab-case)"
+            )
+    else:
+        marketplace_name = plugin_name
+        if surface == "marketplace" or getattr(args, "codex_marketplace", False):
+            warnings.append(
+                f"marketplace name defaulted to '{marketplace_name}'; "
+                "pass --marketplace-name to set your namespace"
+            )
+    owner: dict[str, str] = {"name": args.owner_name} if args.owner_name else {}
+    if not owner:
+        owner = {"name": marketplace_name}
+        warnings.append(
+            f"owner name defaulted to '{marketplace_name}'; pass --owner-name to set the maintainer"
+        )
+    if args.owner_email:
+        owner["email"] = args.owner_email
+    if args.owner_url:
+        owner["url"] = args.owner_url
+    if args.marketplace_version:
+        version = args.marketplace_version
+    else:
+        version = "0.1.0"
+        reader = "`claude plugin update`" if surface == "marketplace" else "installed users"
+        warnings.append(
+            f"{surface} version defaulted to '0.1.0'; bump --marketplace-version on a "
+            f"re-composition so {reader} sees the change"
+        )
+    return _PluginIdentity(plugin_name, marketplace_name, owner, version), warnings
+
+
+def _emit_skills(
+    args: argparse.Namespace,
+    result: MergeResult,
+    sources: list[SkillDoc],
+    carry: dict[str, list[tuple[str, Path]]],
+    generated_at: str,
+    lint: list[PortabilityReport],
+    warnings: list[str],
+) -> int:
+    from skillmeld.emit.agents_md import render_block, upsert_block
+    from skillmeld.emit.package import (
+        InstallConflict,
+        default_plugin_name,
+        emit_skills,
+        install_targets,
+    )
+    from skillmeld.emit.targets import parse_agents, resolve_targets
+
+    written, sidecars = emit_skills(
+        result,
+        Path(args.out),
+        sources=sources,
+        generated_at=generated_at,
+        carry=carry,
+        codex_sidecar=args.codex_sidecar,
+        portability=lint,
+    )
+    payload: dict[str, object] = {
+        "surface": "skills",
+        "written": written,
+        "installed": [],
+        "overwritten": [],
+        "sidecars": sidecars,
+        "agents_md": None,
+        "portability": [report.model_dump() for report in lint],
+    }
+    directories: list[tuple[str, list[str]]] = [(str(Path(args.out)), [])]
+    if args.install_for:
+        try:
+            agents = parse_agents(args.install_for)
+            targets = resolve_targets(agents, scope=args.scope, native=args.native)
+        except ValueError as exc:
+            return _error(str(exc))
+        try:
+            install = install_targets(
+                result,
+                targets=targets,
+                project_root=Path(args.project_root),
+                home=Path.home(),
+                sources=sources,
+                generated_at=generated_at,
+                carry=carry,
+                force=args.force,
+                codex_sidecar=args.codex_sidecar,
+                portability=lint,
+            )
+        except InstallConflict as exc:
+            return _error(
+                "refusing to overwrite an installed skill: "
+                + "; ".join(exc.paths)
+                + "; pass --force to replace it"
+            )
+        payload["installed"] = [item.model_dump() for item in install.installed]
+        payload["overwritten"] = install.overwritten
+        payload["sidecars"] = [*sidecars, *install.sidecars]
+        directories = [(item.path, item.agents) for item in install.installed]
+    if args.agents_md:
+        agents_md = Path(args.agents_md)
+        base = agents_md.resolve().parent
+        shown: list[tuple[str, list[str]]] = []
+        for path, agents in directories:
+            resolved = Path(path).resolve()
+            try:
+                label = str(resolved.relative_to(base))
+            except ValueError:
+                label = str(resolved)
+            shown.append((label, agents))
+        skills = [
+            (
+                str(skill.doc.frontmatter.get("name", skill.doc.source.name)),
+                str(skill.doc.frontmatter.get("description", "")).strip(),
+            )
+            for skill in ([result.orchestrator] if result.orchestrator else [])
+            + list(result.skills)
+        ]
+        set_name = default_plugin_name(result)
+        action = upsert_block(agents_md, set_name, render_block(set_name, skills, shown))
+        payload["agents_md"] = {"path": str(agents_md), "action": action}
+    payload["warnings"] = warnings
+    return _emit(payload)
+
+
+def _emit_plugin(
+    args: argparse.Namespace,
+    result: MergeResult,
+    sources: list[SkillDoc],
+    carry: dict[str, list[tuple[str, Path]]],
+    generated_at: str,
+    lint: list[PortabilityReport],
+    warnings: list[str],
+) -> int:
+    from skillmeld.emit.package import emit_plugin, marketplace_name_blocker
+
+    if result.orchestrator is None and not result.skills:
+        return _error("nothing to emit: the merge result has no skills")
+    identity, identity_warnings = _plugin_identity(args, result, surface="plugin")
+    if args.codex_marketplace:
+        reserved = marketplace_name_blocker(identity.marketplace_name)
+        if reserved is not None:
+            return _error(reserved + "; pass a different --marketplace-name")
+    try:
+        written = emit_plugin(
+            result,
+            Path(args.out),
+            sources=sources,
+            generated_at=generated_at,
+            plugin_name=identity.plugin_name,
+            version=identity.version,
+            owner=identity.owner,
+            carry=carry,
+            codex_marketplace=identity.marketplace_name if args.codex_marketplace else None,
+            codex_compat=args.codex_compat,
+            codex_sidecar=args.codex_sidecar,
+            portability=lint,
+        )
+    except ValueError as exc:
+        return _error(str(exc))
+    return _emit(
+        {
+            "surface": "plugin",
+            "written": written,
+            "portability": [report.model_dump() for report in lint],
+            "warnings": [*warnings, *identity_warnings],
+        }
+    )
 
 
 def _cmd_fetch(selection_path: str) -> int:
@@ -767,6 +983,28 @@ def build_parser() -> argparse.ArgumentParser:
     ground = sub.add_parser("ground", help="Scan a repo into a use-case profile.")
     ground.add_argument("repo")
 
+    skill_install = sub.add_parser(
+        "skill-install",
+        help="Write the /skillmeld driver skill into an agent's skills folder (no clone, no Node).",
+        description=(
+            "Copies the packaged skill (SKILL.md + scripts/run.sh) to <root>/skillmeld/. The "
+            "default root is the shared .agents/skills/ folder that Codex, Cursor, Gemini CLI, "
+            "Copilot and most other agents read; Claude Code users take the plugin route instead."
+        ),
+    )
+    skill_install.add_argument(
+        "--scope", choices=list(SCOPES), default="project", help="project or user (home) folder."
+    )
+    skill_install.add_argument(
+        "--project-root", default=".", help="Project root for the project scope."
+    )
+    skill_install.add_argument(
+        "--dir", help="Explicit skills folder instead of the shared one (e.g. .kiro/skills)."
+    )
+    skill_install.add_argument(
+        "--force", action="store_true", help="Replace an existing skillmeld skill directory."
+    )
+
     dev_catalog = sub.add_parser(
         "dev-catalog", help="Build a local dev-signed catalog from GitHub repos (no ops)."
     )
@@ -822,8 +1060,8 @@ def build_parser() -> argparse.ArgumentParser:
     merge = sub.add_parser("merge", help="Merge selected skill bundles into one tailored set.")
     merge.add_argument("--bundles", nargs="+", required=True, help="Bundle directories to merge.")
     merge.add_argument("--profile", required=True, help="Use-case profile JSON path, or -.")
-    merge.add_argument("--grouping", help="Host-Claude grouping JSON ({atom_id: {group, kind}}).")
-    merge.add_argument("--adjudication", help="Host-Claude conflict adjudication JSON (list).")
+    merge.add_argument("--grouping", help="Host-agent grouping JSON ({atom_id: {group, kind}}).")
+    merge.add_argument("--adjudication", help="Host-agent conflict adjudication JSON (list).")
     merge.add_argument(
         "--sources", help="discover/select JSON; carries catalog licenses into the provenance."
     )
@@ -864,25 +1102,83 @@ def build_parser() -> argparse.ArgumentParser:
     )
     eval_improve.add_argument("--generated-at", help="Override the ledger timestamp (for tests).")
 
-    emit = sub.add_parser("emit", help="Package the merged set for a surface.")
-    emit.add_argument("surface", choices=["claude-code", "claudeai", "api", "marketplace"])
+    emit = sub.add_parser(
+        "emit",
+        help="Package the merged set for a surface (default: skills, the spec-only tree).",
+        description=(
+            "skills writes the Agent Skills tree every reader loads and can install it into each "
+            "agent's own directory; plugin writes an Agent Plugins 1.0.0 package; claude-code, "
+            "claudeai, api and marketplace are the Claude surfaces."
+        ),
+    )
+    emit.add_argument(
+        "surface",
+        nargs="?",
+        default="skills",
+        choices=["skills", "plugin", "claude-code", "claudeai", "api", "marketplace"],
+    )
     emit.add_argument("--result", required=True, help="Merge result/run JSON path, or -.")
     emit.add_argument("--bundles", nargs="+", required=True, help="Source bundle directories.")
-    emit.add_argument("--out", help="Output dir (claude-code, marketplace) or zip path (claudeai).")
+    emit.add_argument(
+        "--out",
+        help="Output dir (skills, plugin, claude-code, marketplace) or zip path (claudeai).",
+    )
     emit.add_argument("--generated-at", help="Override the provenance timestamp (for tests).")
     emit.add_argument(
         "--sources", help="discover/select JSON; carries catalog licenses into PROVENANCE."
     )
-    emit.add_argument("--plugin-name", help="Plugin name, kebab-case (marketplace surface).")
-    emit.add_argument(
-        "--marketplace-name", help="Marketplace name, kebab-case (marketplace surface)."
+    install = emit.add_argument_group("skills surface: install fan-out")
+    install.add_argument(
+        "--install-for",
+        metavar="AGENTS",
+        help=(
+            "Comma-separated agents to install into, or all: "
+            f"{', '.join(AGENT_NAMES)}, agents (the bare .agents/skills folder)."
+        ),
     )
-    emit.add_argument("--owner-name", help="Marketplace maintainer name (marketplace surface).")
-    emit.add_argument("--owner-email", help="Marketplace maintainer email (marketplace surface).")
-    emit.add_argument("--owner-url", help="Marketplace maintainer URL (marketplace surface).")
-    emit.add_argument(
+    install.add_argument(
+        "--scope", choices=list(SCOPES), default="project", help="Install scope (one per run)."
+    )
+    install.add_argument(
+        "--project-root", default=".", help="Project root for project-scope installs."
+    )
+    install.add_argument(
+        "--native",
+        action="store_true",
+        help="Write each agent's own directory instead of the shared .agents/skills folder.",
+    )
+    install.add_argument(
+        "--force", action="store_true", help="Replace a skill directory that already exists."
+    )
+    install.add_argument(
+        "--agents-md",
+        metavar="PATH",
+        help="Add or refresh a marker-delimited block naming the installed skills in this file.",
+    )
+    install.add_argument(
+        "--codex-sidecar",
+        action="store_true",
+        help="Write agents/openai.yaml beside each skill for Codex (skills and plugin surfaces).",
+    )
+    plugin = emit.add_argument_group("plugin and marketplace surfaces")
+    plugin.add_argument(
+        "--codex-marketplace",
+        action="store_true",
+        help="Also write .agents/plugins/marketplace.json naming this package (plugin surface).",
+    )
+    plugin.add_argument(
+        "--codex-compat",
+        action="store_true",
+        help="Also mirror the manifest to .codex-plugin/plugin.json (plugin surface).",
+    )
+    plugin.add_argument("--plugin-name", help="Plugin name, kebab-case.")
+    plugin.add_argument("--marketplace-name", help="Marketplace name, kebab-case.")
+    plugin.add_argument("--owner-name", help="Maintainer name.")
+    plugin.add_argument("--owner-email", help="Maintainer email.")
+    plugin.add_argument("--owner-url", help="Maintainer URL.")
+    plugin.add_argument(
         "--marketplace-version",
-        help="Marketplace + plugin version (marketplace surface; bump on re-composition).",
+        help="Package version (bump on a re-composition so installed users see the change).",
     )
 
     return parser
@@ -899,6 +1195,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_intake(args.use_case)
     if command == "ground":
         return _cmd_ground(args.repo)
+    if command == "skill-install":
+        return _cmd_skill_install(args)
     if command == "catalog":
         return _cmd_catalog(args.action, args.base_url)
     if command == "dev-catalog":

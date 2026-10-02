@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 from typing import Literal
 
@@ -19,6 +20,15 @@ from pydantic import BaseModel, Field
 # https://agentskills.io/specification, the Claude Code surface at https://code.claude.com/docs/en/skills.
 API_DESCRIPTION_LIMIT = 1024
 CLAUDE_CODE_ROUTING_LIMIT = 1536
+
+# Agent Skills spec limits (https://agentskills.io/specification, re-verified 2026-09-30): a name
+# is 1-64 lowercase alphanumerics joined by single hyphens and must match its directory; the
+# description cap is the API limit above; ``compatibility``, when present, is at most 500 chars.
+# Non-ASCII lowercase letters are technically allowed by the spec; the ASCII subset is the safe
+# choice for an emitted directory name on every agent.
+NAME_LIMIT = 64
+COMPATIBILITY_LIMIT = 500
+SPEC_NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 # Skills API headers (re-verified 2026-09-26 against
 # https://platform.claude.com/docs/en/build-with-claude/skills-guide and the Files API and code
@@ -112,6 +122,9 @@ class CatalogEntry(BaseModel):
 
     ``id`` is stable across catalog builds: ``{owner}/{repo}:{skill_dir}``. ``fetch_base`` is a
     raw-content URL prefix pinned to a commit, so fetched bytes match ``files`` hashes.
+    ``sidecars`` names agent-specific files the bundle ships beside SKILL.md (``agents/openai.yaml``
+    for Codex); they stay hash-pinned in ``files`` and are listed here so a client can tell which
+    agent they serve. Absent in catalogs built before 0.5.0, so it defaults to empty.
     """
 
     id: str
@@ -122,6 +135,7 @@ class CatalogEntry(BaseModel):
     files: list[SkillFile] = Field(default_factory=list)
     fetch_base: str | None = None
     bundle_hash: str = ""
+    sidecars: list[str] = Field(default_factory=list)
 
 
 class CatalogDocument(BaseModel):
@@ -162,7 +176,14 @@ class UseCaseProfile(BaseModel):
 
 
 class RepoEvidence(BaseModel):
-    """Deterministic facts from a repo scan. The host Claude derives the summary + tasks."""
+    """Deterministic facts from a repo scan. The host agent derives the summary + tasks.
+
+    ``instructions_excerpt`` is the head of the repo's agent-instructions file (AGENTS.md first)
+    so the profile can see the conventions the repo already states. ``agent_dirs`` are the
+    marker paths found at the root (``.claude``, ``.cursor``, ``AGENTS.md``, ...) and ``agents``
+    the install targets they imply, so the driver can default ``--install-for`` to the agents the
+    repo is already set up for.
+    """
 
     root: str
     file_counts: dict[str, int] = Field(default_factory=dict)
@@ -172,6 +193,10 @@ class RepoEvidence(BaseModel):
     top_dirs: list[str] = Field(default_factory=list)
     readme_excerpt: str = ""
     has_tests: bool = False
+    instructions_file: str = ""
+    instructions_excerpt: str = ""
+    agent_dirs: list[str] = Field(default_factory=list)
+    agents: list[str] = Field(default_factory=list)
 
 
 class Candidate(BaseModel):

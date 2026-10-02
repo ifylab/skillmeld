@@ -138,9 +138,12 @@ def detect_bundle(bundle: Path) -> tuple[LicenseInfo, list[ScanFinding]]:
     return info, findings
 
 
-def _clean_id(raw: str) -> str:
+def clean_id(raw: str) -> str:
     """Drop sentence punctuation left on an id (``license: MIT.``); no id ends in it."""
-    return raw.rstrip(".,;:")
+    return raw.strip().strip("\"'").rstrip(".,;:")
+
+
+_clean_id = clean_id
 
 
 def detect_text(text: str) -> str | None:
@@ -211,12 +214,16 @@ def _resolve_precedence(
     return None, None
 
 
-def _is_known_spdx(spdx_id: str) -> bool:
+def is_known_spdx(spdx_id: str) -> bool:
+    """Whether ``spdx_id`` parses as a valid SPDX license expression."""
     try:
         parsed = _LICENSING.parse(spdx_id, validate=True)
     except (ExpressionError, ValueError):
         return False
     return parsed is not None
+
+
+_is_known_spdx = is_known_spdx
 
 
 def _finding(slug: str, severity: Severity, message: str) -> ScanFinding:

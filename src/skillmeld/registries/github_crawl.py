@@ -24,12 +24,15 @@ from skillmeld.merge.pipeline import _split_frontmatter
 from skillmeld.models import CatalogEntry, LicenseInfo, SkillFile, SkillSource
 from skillmeld.registries.catalog import bundle_hash
 from skillmeld.registries.catalog_client import sha256_hex
-from skillmeld.security.license import detect_text
+from skillmeld.security.license import clean_id, detect_text, is_known_spdx
 
 _API = "https://api.github.com"
 _RAW = "https://raw.githubusercontent.com"
 _TIMEOUT = 30.0
 _LICENSE_NAMES = ("LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING")
+# Agent-specific files a bundle may ship beside SKILL.md; recorded on the entry so a client can
+# tell which agent they serve. They stay in ``files`` and are hash-pinned like everything else.
+_SIDECAR_PATHS = ("agents/openai.yaml",)
 
 
 def _as_list(value: object) -> list[str]:
@@ -151,7 +154,15 @@ def _build_entry(
             entry_license = LicenseInfo(spdx_id=spdx, source="license-file")
 
     frontmatter, _ = _split_frontmatter(skill_md_text)
+    # Last resort: a repo with no LICENSE file anywhere (vercel-labs/agent-skills) may still
+    # declare ``license:`` in the skill's own frontmatter. A file always wins over the tag.
+    if entry_license.spdx_id is None:
+        declared = clean_id(str(frontmatter.get("license") or ""))
+        if declared and is_known_spdx(declared):
+            entry_license = LicenseInfo(spdx_id=declared, source="frontmatter")
+
     name = str(frontmatter.get("name") or (skill_dir.rsplit("/", 1)[-1] or repo.split("/")[-1]))
+    sidecars = [file.path for file in files if file.path in _SIDECAR_PATHS]
     return CatalogEntry(
         id=f"{repo}:{skill_dir}" if skill_dir else repo,
         source=SkillSource(
@@ -163,6 +174,7 @@ def _build_entry(
         files=files,
         fetch_base=fetch_base,
         bundle_hash=bundle_hash(files),
+        sidecars=sidecars,
     )
 
 

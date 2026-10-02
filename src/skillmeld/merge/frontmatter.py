@@ -75,7 +75,7 @@ def _truthy(value: object) -> bool:
     return value is True or (isinstance(value, str) and value.strip().lower() == "true")
 
 
-def _tool_tokens(value: object) -> list[str]:
+def tool_tokens(value: object) -> list[str]:
     """Normalise an allowed/disallowed-tools value: space/comma string, or a YAML list."""
     if isinstance(value, (list, tuple)):
         return [token for token in (str(item).strip() for item in value) if token]
@@ -103,7 +103,7 @@ def reconcile_frontmatter(contributing: list[SkillDoc]) -> ReconciledFrontmatter
     notes: list[str] = []
 
     allow = [
-        _tool_tokens(doc.frontmatter[ALLOWED_TOOLS])
+        tool_tokens(doc.frontmatter[ALLOWED_TOOLS])
         for doc in contributing
         if ALLOWED_TOOLS in doc.frontmatter and _present(doc.frontmatter[ALLOWED_TOOLS])
     ]
@@ -127,7 +127,7 @@ def reconcile_frontmatter(contributing: list[SkillDoc]) -> ReconciledFrontmatter
             )
 
     deny = [
-        _tool_tokens(doc.frontmatter[DISALLOWED_TOOLS])
+        tool_tokens(doc.frontmatter[DISALLOWED_TOOLS])
         for doc in contributing
         if DISALLOWED_TOOLS in doc.frontmatter and _present(doc.frontmatter[DISALLOWED_TOOLS])
     ]

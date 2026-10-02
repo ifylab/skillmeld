@@ -1,27 +1,39 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Package a merged set for each surface: Claude Code plugin tree, claude.ai zip, API payload.
+"""Package a merged set for each surface: spec-only skills tree (and its install fan-out), Agent
+Plugins package, Claude Code tree, claude.ai zip, API payload, Claude Code plugin marketplace.
 
 The emitted ``SKILL.md`` is frontmatter plus the byte-traceable body; the body is never
-rewritten here. ``PROVENANCE.md`` rides alongside as the trust artifact. Cross-surface sync
-does not exist upstream, so each surface is emitted explicitly.
+rewritten here, on any surface. ``PROVENANCE.md`` rides alongside as the trust artifact. Every
+surface renders through the one ``render_skill_md``; the spec-only surfaces differ only in the
+frontmatter fields they leave out. Cross-surface sync does not exist upstream, so each surface is
+emitted explicitly.
 """
 
 from __future__ import annotations
 
 import io
 import json
+import re
+import shutil
 import zipfile
-from pathlib import Path
+from collections.abc import Mapping
+from pathlib import Path, PurePosixPath
 
 import yaml
+from pydantic import BaseModel, Field
 
+from skillmeld.emit.portability import PortabilityReport
 from skillmeld.emit.provenance import build_provenance
+from skillmeld.emit.sidecar import SIDECAR_PATH, write_codex_sidecar
+from skillmeld.emit.targets import ResolvedTarget
 from skillmeld.merge.pipeline import support_references
 from skillmeld.merge.synthesize import slug
 from skillmeld.models import (
     API_DESCRIPTION_LIMIT,
     CLAUDE_CODE_ROUTING_LIMIT,
+    NAME_LIMIT,
     RESERVED_MARKETPLACE_NAMES,
+    SPEC_NAME_RE,
     AssembledSkill,
     MergeResult,
     SkillDoc,
@@ -30,6 +42,38 @@ from skillmeld.models import (
 # Frontmatter the Agent Skills spec allows. Claude Code reads its own wider dialect and ignores
 # unknown fields; a claude.ai upload, the Skills API and package_skill.py refuse anything else.
 SPEC_ONLY_DROPPED = ("disallowed-tools", "disable-model-invocation")
+
+# Agent Plugins 1.0.0 (https://agent-plugins.org/specification, read 2026-09-30): a root
+# plugin.json with ``$schema`` and ``name`` required; skills are the immediate children of
+# ``skills/`` that hold a SKILL.md; unknown ``extensions`` namespaces must be ignored by clients.
+AGENT_PLUGIN_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
+PLUGIN_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{0,63}$")
+SIDECAR_NOTE = (
+    f"{SIDECAR_PATH} beside each skill: Codex UI metadata and invocation policy derived from the "
+    "skill's name and description only, never body text; other agents ignore the directory"
+)
+
+
+class InstallConflict(Exception):
+    """An install target already holds a skill directory the set would overwrite."""
+
+    def __init__(self, paths: list[str]) -> None:
+        self.paths = paths
+        super().__init__("; ".join(paths))
+
+
+class InstalledTarget(BaseModel):
+    agents: list[str] = Field(default_factory=list)
+    scope: str = "project"
+    path: str = ""
+    skills: list[str] = Field(default_factory=list)
+
+
+class InstallReport(BaseModel):
+    installed: list[InstalledTarget] = Field(default_factory=list)
+    overwritten: list[str] = Field(default_factory=list)
+    sidecars: list[str] = Field(default_factory=list)
+    written: list[str] = Field(default_factory=list)
 
 
 def render_skill_md(doc: SkillDoc, *, spec_only: bool = False) -> str:
@@ -108,14 +152,21 @@ def emit_blockers(result: MergeResult) -> list[str]:
     """Reasons the set must not be packaged. Empty means emittable.
 
     The hard backstop against shipping a dead skill: every emitted skill — children and the
-    orchestrator — must carry a non-empty description, or it never triggers once installed. This
-    holds even if the eval loop was skipped, so the install gate cannot be bypassed by omission.
+    orchestrator — must carry a non-empty description, or it never triggers once installed, and a
+    name an agent can load from the directory it is written under (the Agent Skills spec's name
+    rules). Both hold even if the eval loop was skipped, so the install gate cannot be bypassed by
+    omission.
     """
     blockers: list[str] = []
     for skill in _emitted_skills(result):
         name = str(skill.doc.frontmatter.get("name", skill.doc.source.name))
         if not str(skill.doc.frontmatter.get("description", "")).strip():
             blockers.append(f"{name}: description is empty")
+        if len(name) > NAME_LIMIT or not SPEC_NAME_RE.match(name):
+            blockers.append(
+                f"{name}: name is not 1-{NAME_LIMIT} lowercase alphanumerics joined by single "
+                "hyphens, so it cannot match the directory it would be written under"
+            )
     return blockers
 
 
@@ -168,11 +219,64 @@ def plan_support_carry(
         files = [
             (ref, resolved)
             for ref in support_references(skill.doc.body)
-            if (resolved := (bundle / ref).resolve()).is_file() and bundle in resolved.parents
+            # The reference is also the destination path under the emitted skill, so a `..`
+            # segment that still resolves inside the source bundle (`references/../SKILL.md`)
+            # must not be carried either: it would land on top of the rendered SKILL.md.
+            if ".." not in PurePosixPath(ref).parts
+            and (resolved := (bundle / ref).resolve()).is_file()
+            and bundle in resolved.parents
         ]
         if files:
             carry[name] = files
     return carry
+
+
+def _write_skill_tree(
+    result: MergeResult,
+    root: Path,
+    *,
+    spec_only: bool,
+    sources: list[SkillDoc],
+    generated_at: str,
+    carry: dict[str, list[tuple[str, Path]]] | None,
+    provenance: Path,
+    portability: list[PortabilityReport] | None = None,
+    sidecars: bool = False,
+) -> tuple[list[str], list[str]]:
+    """Write ``<root>/<name>/SKILL.md`` per skill, carried support files, optional Codex
+    sidecars, and the provenance file. Returns (every path written, sidecar paths)."""
+    carry = carry or {}
+    written: list[str] = []
+    sidecar_paths: list[str] = []
+    for skill in _emitted_skills(result):
+        name = slug(str(skill.doc.frontmatter.get("name", skill.doc.source.name)))
+        skill_dir = root / name
+        target = skill_dir / "SKILL.md"
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        target.write_text(render_skill_md(skill.doc, spec_only=spec_only), encoding="utf-8")
+        written.append(str(target))
+        for rel, source_file in carry.get(name, []):
+            dest = skill_dir / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(source_file.read_bytes())
+            written.append(str(dest))
+        if sidecars:
+            sidecar = write_codex_sidecar(skill.doc, skill_dir)
+            written.append(sidecar)
+            sidecar_paths.append(sidecar)
+    provenance.parent.mkdir(parents=True, exist_ok=True)
+    provenance.write_text(
+        build_provenance(
+            result,
+            sources,
+            generated_at=generated_at,
+            portability=portability,
+            sidecars=[SIDECAR_NOTE] if sidecars else None,
+        ),
+        encoding="utf-8",
+    )
+    written.append(str(provenance))
+    return sorted(written), sidecar_paths
 
 
 def emit_claude_code(
@@ -182,32 +286,127 @@ def emit_claude_code(
     sources: list[SkillDoc],
     generated_at: str,
     carry: dict[str, list[tuple[str, Path]]] | None = None,
+    portability: list[PortabilityReport] | None = None,
 ) -> list[str]:
     """Write a Claude Code skills tree: ``<out>/<name>/SKILL.md`` per skill + provenance.
 
-    The provenance file is named ``PROVENANCE-<set>.md`` because ``--out`` is commonly a shared
-    skills directory holding earlier installs — a fixed name would silently clobber another
-    composed set's provenance.
+    Keeps Claude Code's own frontmatter fields. The provenance file is named
+    ``PROVENANCE-<set>.md`` because ``--out`` is commonly a shared skills directory holding
+    earlier installs — a fixed name would silently clobber another composed set's provenance.
     """
-    carry = carry or {}
-    written: list[str] = []
-    for skill in _emitted_skills(result):
-        name = slug(str(skill.doc.frontmatter.get("name", skill.doc.source.name)))
-        target = out_dir / name / "SKILL.md"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(render_skill_md(skill.doc), encoding="utf-8")
-        written.append(str(target))
-        for rel, source_file in carry.get(name, []):
-            dest = out_dir / name / rel
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(source_file.read_bytes())
-            written.append(str(dest))
-    provenance = out_dir / f"PROVENANCE-{default_plugin_name(result)}.md"
-    provenance.write_text(
-        build_provenance(result, sources, generated_at=generated_at), encoding="utf-8"
+    written, _ = _write_skill_tree(
+        result,
+        out_dir,
+        spec_only=False,
+        sources=sources,
+        generated_at=generated_at,
+        carry=carry,
+        provenance=out_dir / f"PROVENANCE-{default_plugin_name(result)}.md",
+        portability=portability,
     )
-    written.append(str(provenance))
-    return sorted(written)
+    return written
+
+
+def emit_skills(
+    result: MergeResult,
+    out_dir: Path,
+    *,
+    sources: list[SkillDoc],
+    generated_at: str,
+    carry: dict[str, list[tuple[str, Path]]] | None = None,
+    codex_sidecar: bool = False,
+    portability: list[PortabilityReport] | None = None,
+) -> tuple[list[str], list[str]]:
+    """Write the spec-only skills tree: what every Agent Skills reader loads unchanged.
+
+    Same layout as the Claude Code tree, rendered with the spec's six frontmatter fields only.
+    Returns (every path written, Codex sidecar paths).
+    """
+    return _write_skill_tree(
+        result,
+        out_dir,
+        spec_only=True,
+        sources=sources,
+        generated_at=generated_at,
+        carry=carry,
+        provenance=out_dir / f"PROVENANCE-{default_plugin_name(result)}.md",
+        portability=portability,
+        sidecars=codex_sidecar,
+    )
+
+
+def install_targets(
+    result: MergeResult,
+    *,
+    targets: list[ResolvedTarget],
+    project_root: Path,
+    home: Path,
+    sources: list[SkillDoc],
+    generated_at: str,
+    carry: dict[str, list[tuple[str, Path]]] | None = None,
+    force: bool = False,
+    codex_sidecar: bool = False,
+    portability: list[PortabilityReport] | None = None,
+) -> InstallReport:
+    """Copy the set into each resolved target directory, rendered in that target's dialect.
+
+    Pre-flights every target first: an existing skill directory (or a symlink by that name, which
+    is how some installers place skills) stops the whole install (nothing written) unless
+    ``force``, which removes exactly that entry, rewrites it, and reports it as overwritten. A
+    symlink is unlinked, never followed, so nothing outside the target directory is touched.
+    Copies, never symlinks. Codex sidecars go only into directories Codex reads.
+    """
+    names = [
+        slug(str(skill.doc.frontmatter.get("name", skill.doc.source.name)))
+        for skill in _emitted_skills(result)
+    ]
+    roots = [(target, _target_root(target, project_root, home)) for target in targets]
+    existing = [str(root / name) for _, root in roots for name in names if _occupied(root / name)]
+    if existing and not force:
+        raise InstallConflict(existing)
+
+    report = InstallReport(overwritten=existing)
+    for target, root in roots:
+        for name in names:
+            _remove_entry(root / name)
+        written, sidecars = _write_skill_tree(
+            result,
+            root,
+            spec_only=target.spec_only,
+            sources=sources,
+            generated_at=generated_at,
+            carry=carry,
+            provenance=root / f"PROVENANCE-{default_plugin_name(result)}.md",
+            portability=portability,
+            sidecars=codex_sidecar and "codex" in target.agents,
+        )
+        report.installed.append(
+            InstalledTarget(
+                agents=list(target.agents), scope=target.scope, path=str(root), skills=names
+            )
+        )
+        report.written.extend(written)
+        report.sidecars.extend(sidecars)
+    return report
+
+
+def _target_root(target: ResolvedTarget, project_root: Path, home: Path) -> Path:
+    if target.path_rel.startswith("~/"):
+        return home / target.path_rel[2:]
+    return project_root / target.path_rel
+
+
+def _occupied(path: Path) -> bool:
+    """Whether anything sits at ``path``: a directory, a file, or a symlink, dangling or not."""
+    return path.is_symlink() or path.exists()
+
+
+def _remove_entry(path: Path) -> None:
+    """Remove the one entry a forced install replaces: unlink a link or file, remove a directory."""
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.is_dir():
+        shutil.rmtree(path)
 
 
 def emit_claudeai_zip(
@@ -252,27 +451,14 @@ def emit_marketplace(
     alongside a strict:false entry is a hard load conflict. PROVENANCE.md sits at the plugin root
     and is copied along with the skill when the plugin is installed.
     """
-    carry = carry or {}
-    written: list[str] = []
-    skill_paths: list[str] = []
-    for skill in _emitted_skills(result):
-        name = slug(str(skill.doc.frontmatter.get("name", skill.doc.source.name)))
-        target = out_dir / "skills" / name / "SKILL.md"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(render_skill_md(skill.doc), encoding="utf-8")
-        written.append(str(target))
-        skill_paths.append(f"./skills/{name}")
-        for rel, source_file in carry.get(name, []):
-            dest = out_dir / "skills" / name / rel
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(source_file.read_bytes())
-            written.append(str(dest))
-
-    provenance = out_dir / "PROVENANCE.md"
-    provenance.write_text(
-        build_provenance(result, sources, generated_at=generated_at), encoding="utf-8"
+    written, skill_paths = _write_plugin_tree(
+        result,
+        out_dir,
+        spec_only=False,
+        sources=sources,
+        generated_at=generated_at,
+        carry=carry,
     )
-    written.append(str(provenance))
 
     manifest = _marketplace_manifest(
         result,
@@ -289,6 +475,115 @@ def emit_marketplace(
     )
     written.append(str(manifest_path))
     return sorted(written)
+
+
+def _write_plugin_tree(
+    result: MergeResult,
+    out_dir: Path,
+    *,
+    spec_only: bool,
+    sources: list[SkillDoc],
+    generated_at: str,
+    carry: dict[str, list[tuple[str, Path]]] | None,
+    portability: list[PortabilityReport] | None = None,
+    sidecars: bool = False,
+) -> tuple[list[str], list[str]]:
+    """Write ``skills/<name>/`` per skill plus a root ``PROVENANCE.md``: the plugin-shaped tree
+    both the Claude marketplace and the Agent Plugins package are built on. Returns (every path
+    written, ``./skills/<name>`` entries in emit order)."""
+    written, _ = _write_skill_tree(
+        result,
+        out_dir / "skills",
+        spec_only=spec_only,
+        sources=sources,
+        generated_at=generated_at,
+        carry=carry,
+        provenance=out_dir / "PROVENANCE.md",
+        portability=portability,
+        sidecars=sidecars,
+    )
+    skill_paths = [
+        f"./skills/{slug(str(skill.doc.frontmatter.get('name', skill.doc.source.name)))}"
+        for skill in _emitted_skills(result)
+    ]
+    return written, skill_paths
+
+
+def emit_plugin(
+    result: MergeResult,
+    out_dir: Path,
+    *,
+    sources: list[SkillDoc],
+    generated_at: str,
+    plugin_name: str,
+    version: str,
+    owner: dict[str, str],
+    carry: dict[str, list[tuple[str, Path]]] | None = None,
+    codex_marketplace: str | None = None,
+    codex_compat: bool = False,
+    codex_sidecar: bool = False,
+    portability: list[PortabilityReport] | None = None,
+) -> list[str]:
+    """Write an Agent Plugins 1.0.0 package: ``plugin.json``, ``skills/<name>/``, ``PROVENANCE.md``.
+
+    The skills are rendered spec-only. ``codex_marketplace`` adds ``.agents/plugins/
+    marketplace.json`` naming this directory as a local plugin, the shape Codex marketplaces
+    read; ``codex_compat`` mirrors the manifest to ``.codex-plugin/plugin.json``. Never writes
+    ``.claude-plugin/``; the Claude marketplace is its own surface.
+    """
+    if not PLUGIN_NAME_RE.match(plugin_name):
+        raise ValueError(
+            f"plugin name {plugin_name!r} must be 1-64 lowercase alphanumerics, hyphens or periods"
+        )
+    written, _ = _write_plugin_tree(
+        result,
+        out_dir,
+        spec_only=True,
+        sources=sources,
+        generated_at=generated_at,
+        carry=carry,
+        portability=portability,
+        sidecars=codex_sidecar,
+    )
+    manifest = _plugin_manifest(result, plugin_name=plugin_name, version=version, owner=owner)
+    written.append(
+        _write_json(out_dir / "plugin.json", {"$schema": AGENT_PLUGIN_SCHEMA, **manifest})
+    )
+    if codex_compat:
+        written.append(_write_json(out_dir / ".codex-plugin" / "plugin.json", manifest))
+    if codex_marketplace is not None:
+        marketplace = {
+            "name": codex_marketplace,
+            "interface": {"displayName": codex_marketplace},
+            "plugins": [{"name": plugin_name, "source": {"source": "local", "path": "./"}}],
+        }
+        written.append(
+            _write_json(out_dir / ".agents" / "plugins" / "marketplace.json", marketplace)
+        )
+    return sorted(written)
+
+
+def _plugin_manifest(
+    result: MergeResult, *, plugin_name: str, version: str, owner: dict[str, str]
+) -> dict[str, object]:
+    primary = _emitted_skills(result)[0]
+    manifest: dict[str, object] = {
+        "name": plugin_name,
+        "version": version,
+        "description": str(primary.doc.frontmatter.get("description", "")).strip(),
+        "author": owner,
+        "keywords": ["agent-skills", "skillmeld"],
+    }
+    license_id = result.plan.license_resolution.spdx_id
+    if license_id:
+        manifest["license"] = license_id
+    return manifest
+
+
+def _write_json(path: Path, payload: Mapping[str, object]) -> str:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return str(path)
 
 
 def _marketplace_manifest(
