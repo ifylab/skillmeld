@@ -89,6 +89,22 @@ def test_crawl_builds_entries_with_hashes_and_license() -> None:
     assert qto.fetch_base == f"https://raw.githubusercontent.com/acme/skills/{SHA}/ifc-qto"
 
 
+def test_crawl_survives_a_transient_raw_5xx(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("skillmeld.registries.fetch.sleep", lambda _: None)
+    serve = _repo_handler(REPO, SHA, "main", TREE, FILES)
+    failed: list[str] = []
+
+    def flaky(request: httpx.Request) -> httpx.Response:
+        if str(request.url).endswith("/ifc-qto/reference.md") and not failed:
+            failed.append(str(request.url))
+            return httpx.Response(501, text="First fragment: Transfer-Encoding not supported")
+        return serve(request)
+
+    entries = crawl([REPO], client=httpx.Client(transport=httpx.MockTransport(flaky)))
+    assert failed
+    assert {f.path for f in entries[0].files} == {"SKILL.md", "reference.md"}
+
+
 def test_crawl_pins_a_non_main_default_branch_to_its_commit() -> None:
     sha = "beef0002" + "0" * 32
     tree = {"tree": [{"path": "s/SKILL.md", "type": "blob"}]}

@@ -24,6 +24,7 @@ from skillmeld.merge.pipeline import _split_frontmatter
 from skillmeld.models import CatalogEntry, LicenseInfo, SkillFile, SkillSource
 from skillmeld.registries.catalog import bundle_hash
 from skillmeld.registries.catalog_client import sha256_hex
+from skillmeld.registries.fetch import get_with_retry
 from skillmeld.security.license import clean_id, detect_text, is_known_spdx
 
 _API = "https://api.github.com"
@@ -249,14 +250,14 @@ def _headers() -> dict[str, str]:
 
 
 def _get_json(http: httpx.Client, url: str) -> dict[str, object]:
-    response = http.get(url)
+    response = get_with_retry(http, url)
     response.raise_for_status()
     data = response.json()
     return data if isinstance(data, dict) else {}
 
 
 def _get_bytes(http: httpx.Client, url: str) -> bytes | None:
-    response = http.get(url)
+    response = get_with_retry(http, url)
     if response.status_code == 404:
         return None
     response.raise_for_status()
