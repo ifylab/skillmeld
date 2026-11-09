@@ -628,6 +628,45 @@ def test_build_catalog_without_signing_key_errors(
     assert "SKILLMELD_SIGNING_KEY" in out["error"]
 
 
+def test_build_catalog_prints_retries_to_stderr_only_while_building(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import logging
+
+    import httpx
+
+    from skillmeld.registries import net
+
+    def failing_build(*_args: object, **_kwargs: object) -> object:
+        net.log.info("GET https://host/f failed (502); retry 1 of 3 in 1s")
+        raise httpx.ConnectError("down")
+
+    monkeypatch.setattr("skillmeld.hosted.build_catalog.signing_key_from_env", lambda: object())
+    monkeypatch.setattr("skillmeld.hosted.build_catalog.build_production_catalog", failing_build)
+    skillmeld_logger = logging.getLogger("skillmeld")
+    levels_before = (
+        logging.getLogger().level,
+        logging.getLogger("httpx").level,
+        skillmeld_logger.level,
+    )
+    handlers_before = list(skillmeld_logger.handlers)
+
+    code = main(["build-catalog", "--out", str(tmp_path / "out")])
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "retry 1 of 3" in captured.err
+    assert "retry" not in captured.out
+    assert "catalog build failed" in json.loads(captured.out)["error"]
+    assert skillmeld_logger.handlers == handlers_before
+    levels_after = (
+        logging.getLogger().level,
+        logging.getLogger("httpx").level,
+        skillmeld_logger.level,
+    )
+    assert levels_after == levels_before
+
+
 def test_catalog_sync_accepts_a_base_url_override() -> None:
     from skillmeld.cli import build_parser
 

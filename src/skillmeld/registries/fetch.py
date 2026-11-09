@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path, PurePosixPath
-from time import sleep
 from urllib.parse import quote
 
 import httpx
@@ -18,44 +17,11 @@ import httpx
 from skillmeld.models import CatalogEntry, SkillFile
 from skillmeld.registries.catalog import bundle_hash
 from skillmeld.registries.catalog_client import cache_root, sha256_hex
-
-_TIMEOUT = 30.0
-_RETRY_DELAYS = (1.0, 2.0, 4.0)
-_MAX_RETRY_AFTER = 60.0
+from skillmeld.registries.net import get_with_retry, new_client
 
 
 class FetchError(Exception):
     """A bundle could not be fetched or failed verification."""
-
-
-def get_with_retry(http: httpx.Client, url: str) -> httpx.Response:
-    """GET ``url``, retrying any 5xx, a 429, or a transport error with backoff.
-
-    The weekly catalog build makes thousands of GitHub requests, and GitHub's raw CDN
-    occasionally answers one with a spurious 5xx (even a 501); without a retry that single
-    response aborts the whole build. Any other status is returned for the caller to judge, and
-    the final attempt's response or transport error goes back unchanged.
-    """
-    for delay in _RETRY_DELAYS:
-        try:
-            response = http.get(url)
-        except httpx.TransportError:
-            sleep(delay)
-            continue
-        if response.status_code != 429 and response.status_code < 500:
-            return response
-        wait = _retry_after(response)
-        sleep(delay if wait is None else wait)
-    return http.get(url)
-
-
-def _retry_after(response: httpx.Response) -> float | None:
-    """A ``Retry-After`` in whole seconds, capped; the HTTP-date form falls back to backoff."""
-    try:
-        seconds = int(response.headers.get("Retry-After", ""))
-    except ValueError:
-        return None
-    return min(max(float(seconds), 0.0), _MAX_RETRY_AFTER)
 
 
 def fetch_bundle(
@@ -91,7 +57,7 @@ def fetch_bundle(
 
     base = entry.fetch_base.rstrip("/")
     owns_client = client is None
-    http = client if client is not None else httpx.Client(timeout=_TIMEOUT)
+    http = client if client is not None else new_client()
     try:
         for file in entry.files:
             data = _fetch_file(http, base, file)

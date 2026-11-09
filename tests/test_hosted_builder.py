@@ -90,7 +90,7 @@ def test_crawl_builds_entries_with_hashes_and_license() -> None:
 
 
 def test_crawl_survives_a_transient_raw_5xx(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("skillmeld.registries.fetch.sleep", lambda _: None)
+    monkeypatch.setattr("skillmeld.registries.net.sleep", lambda _: None)
     serve = _repo_handler(REPO, SHA, "main", TREE, FILES)
     failed: list[str] = []
 

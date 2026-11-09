@@ -4,6 +4,23 @@ All notable changes to skillmeld are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-11-09
+
+### Fixed
+
+- The catalog build and bundle fetches retry a transient 5xx, 429 or connection error
+  with backoff, honoring a short Retry-After. One bad response from GitHub's raw CDN
+  aborted the 2026-11-09 weekly build.
+- `catalog sync` retries the same way.
+- The catalog workflow fails at the build step when the build fails, and has a 60-minute
+  timeout.
+
+### Changed
+
+- Runtime requests identify as `skillmeld/<version>`.
+- `build-catalog` logs each retry to stderr, and the workflow posts the build summary to
+  the run page.
+
 ## [0.5.0] - 2026-09-30
 
 ### Added
@@ -242,6 +259,7 @@ grounding, discovery over a signed catalog, selection (at most three), a tri-sta
 security gate, the eight-step byte-traceable merge engine, evaluation, and packaging
 for Claude Code / claude.ai / the API with provenance.
 
+[0.5.1]: https://github.com/ifylab/skillmeld/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/ifylab/skillmeld/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/ifylab/skillmeld/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/ifylab/skillmeld/compare/v0.2.0...v0.3.0

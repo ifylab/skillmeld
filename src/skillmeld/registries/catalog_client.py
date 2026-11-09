@@ -21,6 +21,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pydantic import ValidationError
 
 from skillmeld.models import Artifact, CatalogManifest
+from skillmeld.registries.net import get_with_retry, new_client
 
 # Cloudflare R2 bucket behind the data.ifylab.dev custom domain, refreshed by CI.
 DEFAULT_BASE_URL = "https://data.ifylab.dev/skillmeld"
@@ -37,8 +38,6 @@ TRUSTED_KEYS: dict[str, bytes] = {
 # Dev-only trust hook: a local builder exports its public key here so a locally-signed catalog
 # verifies offline, with no production key. Never set this in a trusted/production environment.
 _DEV_PUBKEY_ENV = "SKILLMELD_DEV_PUBKEY"
-
-_TIMEOUT = 30.0
 
 
 class CatalogError(Exception):
@@ -135,7 +134,7 @@ def sync(
     """Fetch the signed manifest and artifacts, verify everything, and cache locally."""
     target = cache_dir if cache_dir is not None else cache_root()
     owns_client = client is None
-    http = client if client is not None else httpx.Client(timeout=_TIMEOUT)
+    http = client if client is not None else new_client()
     try:
         raw = _fetch(http, f"{base_url}/manifest.json")
         signature = _fetch(http, f"{base_url}/manifest.sig")
@@ -161,6 +160,6 @@ def sync(
 
 
 def _fetch(http: httpx.Client, url: str) -> bytes:
-    response = http.get(url)
+    response = get_with_retry(http, url)
     response.raise_for_status()
     return response.content

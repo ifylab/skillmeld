@@ -34,6 +34,17 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SKILLMELD_SIGNING_KEY: ${{ secrets.SKILLMELD_SIGNING_KEY }}
         run: uv run skillmeld build-catalog --out dist/catalog | tee build-summary.json
+      - name: Summarize the build
+        # Runs after a failed build too, so the error lands on the run page; the upload below
+        # still skips because a previous step failed.
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo "### Catalog build"
+            echo '```json'
+            cat build-summary.json 2>/dev/null || echo '{"error": "no summary written"}'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload to R2
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

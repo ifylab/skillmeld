@@ -141,3 +141,59 @@ def test_sync_rejects_bad_artifact_hash(tmp_path: Path) -> None:
     client = httpx.Client(transport=httpx.MockTransport(handler), base_url="https://host")
     with pytest.raises(cat.CatalogError):
         cat.sync("https://host", cache_dir=tmp_path, trusted_keys=trusted, client=client)
+
+
+def _served_catalog() -> tuple[dict[str, bytes], dict[str, bytes], bytes, str]:
+    """A signed one-artifact catalog as served paths: (files, trusted keys, blob, digest)."""
+    private, trusted = _keypair()
+    blob = b"catalog-bytes"
+    digest = cat.sha256_hex(blob)
+    artifacts: list[dict[str, object]] = [
+        {
+            "name": "catalog",
+            "version": "1",
+            "url": "https://host/catalog.json",
+            "sha256": digest,
+            "size": len(blob),
+        }
+    ]
+    raw, sig = _signed_manifest(private, artifacts)
+    served = {"/manifest.json": raw, "/manifest.sig": sig, "/catalog.json": blob}
+    return served, trusted, blob, digest
+
+
+def test_sync_survives_a_transient_5xx(tmp_path: Path, sleeps: list[float]) -> None:
+    served, trusted, blob, digest = _served_catalog()
+    failed: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/manifest.json" and not failed:
+            failed.append(request.url.path)
+            return httpx.Response(502)
+        return httpx.Response(200, content=served[request.url.path])
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    cat.sync("https://host", cache_dir=tmp_path, trusted_keys=trusted, client=client)
+    assert failed == ["/manifest.json"]
+    assert sleeps == [1.0]
+    assert (tmp_path / "blobs" / digest).read_bytes() == blob
+
+
+def test_sync_without_a_client_identifies_as_skillmeld(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from skillmeld.registries.net import USER_AGENT, new_client
+
+    served, trusted, _, _ = _served_catalog()
+    agents: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        agents.append(request.headers["User-Agent"])
+        return httpx.Response(200, content=served[request.url.path])
+
+    def identified() -> httpx.Client:
+        return httpx.Client(transport=httpx.MockTransport(handler), headers=new_client().headers)
+
+    monkeypatch.setattr(cat, "new_client", identified)
+    cat.sync("https://host", cache_dir=tmp_path, trusted_keys=trusted)
+    assert len(agents) == 3 and set(agents) == {USER_AGENT}

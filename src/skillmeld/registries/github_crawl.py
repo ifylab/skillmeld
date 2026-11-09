@@ -24,7 +24,7 @@ from skillmeld.merge.pipeline import _split_frontmatter
 from skillmeld.models import CatalogEntry, LicenseInfo, SkillFile, SkillSource
 from skillmeld.registries.catalog import bundle_hash
 from skillmeld.registries.catalog_client import sha256_hex
-from skillmeld.registries.fetch import get_with_retry
+from skillmeld.registries.net import get_with_retry
 from skillmeld.security.license import clean_id, detect_text, is_known_spdx
 
 _API = "https://api.github.com"

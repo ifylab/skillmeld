@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -31,6 +33,26 @@ def _emit(payload: dict[str, object]) -> int:
 
 def _not_implemented(command: str) -> int:
     return _emit({"status": "not-implemented", "command": command})
+
+
+@contextmanager
+def _retries_logged_to_stderr() -> Iterator[None]:
+    """Print retry lines while a catalog build runs; stdout stays the JSON summary.
+
+    Only the ``skillmeld`` logger is opened up: INFO on the root logger would also switch on
+    httpx's line per request, thousands of them in one build.
+    """
+    logger = logging.getLogger("skillmeld")
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    previous = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    try:
+        yield
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous)
 
 
 def _error(message: str) -> int:
@@ -543,13 +565,14 @@ def _cmd_build_catalog(args: argparse.Namespace) -> int:
         return _error(str(exc))
     generated_at = args.generated_at or datetime.now(UTC).isoformat(timespec="seconds")
     try:
-        manifest, document, verdicts = build_production_catalog(
-            args.repos or PRODUCTION_REPOS,
-            Path(args.out),
-            private_key=private,
-            generated_at=generated_at,
-            base_url=args.base_url or DEFAULT_BASE_URL,
-        )
+        with _retries_logged_to_stderr():
+            manifest, document, verdicts = build_production_catalog(
+                args.repos or PRODUCTION_REPOS,
+                Path(args.out),
+                private_key=private,
+                generated_at=generated_at,
+                base_url=args.base_url or DEFAULT_BASE_URL,
+            )
     except (OSError, httpx.HTTPError, FetchError) as exc:
         return _error(f"catalog build failed: {exc}")
     counts: dict[str, int] = {}
